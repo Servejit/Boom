@@ -359,9 +359,9 @@ def analyze_1h_perspective(hourly):
     if hourly is None or hourly.empty or len(hourly) < 4:
         return empty
 
-    # Exact sequence:
-    # Red 3 -> Red 2 -> Red 1 -> Current Green
-    # Red 1 is immediately before the current 1H candle.
+    # Exact sequence from newest backward:
+    # Current Green <- Red 1 <- Red 2 <- Red 3
+    # Red 1 is the candle immediately before the current 1H candle.
     cur = hourly.iloc[-1]
     red1 = hourly.iloc[-2]
     red2 = hourly.iloc[-3]
