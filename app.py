@@ -10,9 +10,6 @@ import re
 
 st.set_page_config(page_title="3-Minute Bullish BUY Scanner", page_icon="📈", layout="wide")
 
-# ============================================================
-# PERSISTENT UPLOADED STOCK UNIVERSE
-# ============================================================
 UNIVERSE_FILE = Path(".boom_stock_universe.csv")
 UNIVERSE_META = Path(".boom_stock_universe_meta.json")
 
@@ -20,8 +17,7 @@ def normalize_symbol(value):
     if pd.isna(value):
         return ""
     s = str(value).strip().upper()
-    s = re.sub(r"s+", "", s)
-    s = s.replace("$", "")
+    s = re.sub(r"\s+", "", s).replace("$", "")
     if s.endswith(".NS"):
         return s
     if re.fullmatch(r"[A-Z0-9&._-]+", s):
@@ -46,12 +42,7 @@ def is_green_value(v):
     s = str(v).strip().lower()
     if not s or s in {"nan", "none", "null"}:
         return False
-    green_words = [
-        "green", "light green", "dark green", "bright green",
-        "lime", "mint", "teal", "olive", "chartreuse",
-        "green 1", "green 2", "green 3", "green 4",
-        "lightgreen", "darkgreen", "brightgreen"
-    ]
+    green_words = ["green", "light green", "dark green", "bright green", "lime", "mint", "teal", "olive", "chartreuse", "green 1", "green 2", "green 3", "green 4", "lightgreen", "darkgreen", "brightgreen"]
     if any(w in s for w in green_words):
         return True
     if s.startswith("#"):
@@ -71,38 +62,19 @@ def is_green_value(v):
             pass
     return False
 
-def read_uploaded_file(uploaded):
-    name = uploaded.name.lower()
-    if name.endswith(".csv"):
-        return pd.read_csv(uploaded)
-    if name.endswith((".xlsx", ".xls")):
-        return pd.read_excel(uploaded)
-    raise ValueError("Upload CSV or Excel file.")
-
 def extract_green_stocks(df):
     symbol_col = detect_symbol_column(df)
     if symbol_col is None:
         raise ValueError("Could not identify a stock-symbol column.")
+    green_columns = [c for c in df.columns if any(x in str(c).strip().lower() for x in ["color", "colour", "shade", "status", "signal", "highlight"])]
     green_rows = []
-    green_columns = []
-    for c in df.columns:
-        cname = str(c).strip().lower()
-        if any(x in cname for x in ["color", "colour", "shade", "status", "signal", "highlight"]):
-            green_columns.append(c)
     for _, row in df.iterrows():
         symbol = normalize_symbol(row[symbol_col])
         if not symbol:
             continue
-        marked_green = False
-        for c in green_columns:
-            if is_green_value(row[c]):
-                marked_green = True
-                break
+        marked_green = any(is_green_value(row[c]) for c in green_columns)
         if not marked_green:
-            for value in row.tolist():
-                if is_green_value(value):
-                    marked_green = True
-                    break
+            marked_green = any(is_green_value(value) for value in row.tolist())
         if marked_green:
             green_rows.append(symbol)
     return list(dict.fromkeys(green_rows))
@@ -164,8 +136,7 @@ def extract_green_stocks_from_excel(uploaded_bytes, filename):
 def save_universe(records, original_filename):
     pd.DataFrame(records).drop_duplicates(subset=["Symbol"]).to_csv(UNIVERSE_FILE, index=False)
     symbols = [r["Symbol"] for r in records]
-    meta = {"filename": original_filename, "count": len(symbols), "updated": pd.Timestamp.now().isoformat(),
-            "hash": hashlib.sha256("|".join(symbols).encode()).hexdigest()}
+    meta = {"filename": original_filename, "count": len(symbols), "updated": pd.Timestamp.now().isoformat(), "hash": hashlib.sha256("|".join(symbols).encode()).hexdigest()}
     UNIVERSE_META.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
 def load_saved_universe():
@@ -195,11 +166,7 @@ st.title("📈 3-Minute Bullish BUY Scanner")
 st.subheader("🟢 Green-Stock Universe")
 
 with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_universe())):
-    uploaded = st.file_uploader(
-        "Upload your Excel/CSV stock file. Only green-shade stocks will be scanned.",
-        type=["xlsx", "xls", "csv"],
-        key="stock_universe_upload"
-    )
+    uploaded = st.file_uploader("Upload your Excel/CSV stock file. Only green-shade stocks will be scanned.", type=["xlsx", "xls", "csv"], key="stock_universe_upload")
     if uploaded is not None:
         try:
             raw_bytes = uploaded.getvalue()
@@ -208,14 +175,11 @@ with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_uni
                 if not records:
                     import io
                     df_upload = pd.read_excel(io.BytesIO(raw_bytes))
-                    symbols = extract_green_stocks(df_upload)
-                    records = [{"Symbol": s, "Green Shade": "Green", "Green Color": "#00B050"} for s in symbols]
+                    records = [{"Symbol": s, "Green Shade": "Green", "Green Color": "#00B050"} for s in extract_green_stocks(df_upload)]
             else:
                 import io
                 df_upload = pd.read_csv(io.BytesIO(raw_bytes))
-                symbols = extract_green_stocks(df_upload)
-                records = [{"Symbol": s, "Green Shade": "Green", "Green Color": "#00B050"} for s in symbols]
-
+                records = [{"Symbol": s, "Green Shade": "Green", "Green Color": "#00B050"} for s in extract_green_stocks(df_upload)]
             if records:
                 save_universe(records, uploaded.name)
                 st.success(f"Saved {len(records)} green-shade stocks from {uploaded.name}. This list will remain active until the next upload.")
@@ -232,12 +196,10 @@ if saved_universe:
     st.success(f"ACTIVE UNIVERSE: {len(saved_universe)} green stocks | File: {meta.get('filename','saved file')} | Next upload will replace this list.")
     universe_df = pd.DataFrame({"Green Stocks": [r["Symbol"].replace(".NS", "") for r in saved_universe]})
     color_map = {r["Symbol"].replace(".NS", ""): r.get("Green Color", "#00B050") or "#00B050" for r in saved_universe}
-
     def color_universe_rows(row):
         symbol = str(row["Green Stocks"])
         color = color_map.get(symbol, "#00B050")
         return [f"background-color: {color}; font-weight: 700"]
-
     st.dataframe(universe_df.style.apply(color_universe_rows, axis=1), use_container_width=True, hide_index=True)
 else:
     st.warning("No stock file is saved yet. Upload your file to create the green-stock scanning universe.")
@@ -267,15 +229,6 @@ with st.sidebar:
     bt_target = st.number_input("Backtest target %", 0.2, 10.0, 1.0, 0.1)
     bt_stop = st.number_input("Backtest stop %", 0.2, 5.0, 0.5, 0.1)
     bt_bars = st.number_input("Bars after signal", 1, 50, 10)
-    st.subheader("Price Pressure / Breakout")
-    use_pressure_confirmation = st.checkbox("Use price pressure confirmation", value=True)
-    pressure_lookback = st.number_input("Compression lookback bars", 3, 20, 5)
-    pressure_range_factor = st.slider("Max compression range vs average", 0.40, 1.00, 0.75, 0.05)
-    pressure_breakout_bars = st.number_input("Breakout lookback bars", 2, 20, 5)
-    pressure_close_position = st.slider("Minimum close position in candle", 0.60, 0.98, 0.70, 0.05)
-    pressure_min_expansion = st.slider("Minimum signal range vs compression", 1.00, 3.00, 1.20, 0.05)
-    st.subheader("Smart Accumulation Breakout")
-    use_smart_accumulation = st.checkbox("Use Smart Accumulation Breakout", value=False)
 
 def clean_columns(df):
     if df is None or df.empty:
@@ -329,9 +282,9 @@ def calculate_adx(df, period=None):
     atr = tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     plus_smoothed = plus_dm.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     minus_smoothed = minus_dm.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
-    df["Plus_DI"] = 100 * plus_smoothed / atr.replace(0, np.nan)
-    df["Minus_DI"] = 100 * minus_smoothed / atr.replace(0, np.nan)
-    dx = 100 * (df["Plus_DI"] - df["Minus_DI"]).abs() / (df["Plus_DI"] + df["Minus_DI"]).replace(0, np.nan)
+    df["+DI"] = 100 * plus_smoothed / atr.replace(0, np.nan)
+    df["-DI"] = 100 * minus_smoothed / atr.replace(0, np.nan)
+    dx = 100 * (df["+DI"] - df["-DI"]).abs() / (df["+DI"] + df["-DI"]).replace(0, np.nan)
     df["ADX"] = dx.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     return df
 
@@ -365,102 +318,6 @@ def kijun_crosses_through_candle(row):
     tol = abs(float(k)) * kijun_tolerance / 100.0
     return float(row["Low"]) - tol <= float(k) <= float(row["High"]) + tol
 
-def price_pressure_confirmation(df, pos):
-    """Additional price-action confirmation: compression, expansion, breakout and strong close."""
-    try:
-        lb = int(pressure_lookback)
-        blb = int(pressure_breakout_bars)
-        if pos < max(lb, blb) + 1:
-            return False, {}
-        ranges = (df["High"] - df["Low"]).astype(float)
-        signal = df.iloc[pos]
-        prior_high = float(df["High"].iloc[pos - blb:pos].max())
-        compression = ranges.iloc[pos - lb:pos].dropna()
-        signal_range = float(signal["High"] - signal["Low"])
-        if len(compression) < lb or signal_range <= 0:
-            return False, {}
-        avg_range = float(compression.mean())
-        compressed = avg_range > 0 and float(compression.iloc[-1]) <= avg_range * float(pressure_range_factor)
-        breakout = float(signal["High"]) > prior_high
-        close_position = (float(signal["Close"]) - float(signal["Low"])) / signal_range
-        strong_close = close_position >= float(pressure_close_position)
-        expansion = avg_range > 0 and signal_range >= avg_range * float(pressure_min_expansion)
-        upper_wick = float(signal["High"]) - float(signal["Close"])
-        body = float(signal["Close"]) - float(signal["Open"])
-        limited_rejection = body > 0 and upper_wick <= body
-        checks = [compressed, breakout, strong_close, expansion, limited_rejection]
-        return all(checks), {
-            "Pressure Score": sum(checks),
-            "Pressure Compression": compressed,
-            "Pressure Breakout": breakout,
-            "Pressure Strong Close": strong_close,
-            "Pressure Expansion": expansion,
-            "Pressure Limited Rejection": limited_rejection
-        }
-    except Exception:
-        return False, {}
-
-def smart_accumulation_breakout(df, pos):
-    """Look for accumulation -> downside liquidity sweep -> recovery -> breakout."""
-    try:
-        # Fixed pattern deliberately kept behind one master switch.
-        # All checks use candles at/before the signal candle; no future look-ahead.
-        accumulation_bars = 5
-        sweep_pos = pos - 2
-        recovery_pos = pos - 1
-        if pos < accumulation_bars + 3:
-            return False, {}
-        accumulation = df.iloc[pos - accumulation_bars - 2:pos - 2]
-        sweep = df.iloc[sweep_pos]
-        recovery = df.iloc[recovery_pos]
-        signal = df.iloc[pos]
-        if len(accumulation) < accumulation_bars:
-            return False, {}
-
-        ranges = (accumulation["High"] - accumulation["Low"]).astype(float)
-        avg_range = float(ranges.mean())
-        if avg_range <= 0:
-            return False, {}
-
-        # 1) Tight accumulation: each accumulation candle stays reasonably contained.
-        acc_high = float(accumulation["High"].max())
-        acc_low = float(accumulation["Low"].min())
-        acc_width = acc_high - acc_low
-        compression_ok = acc_width <= avg_range * 4.0 and float(ranges.max()) <= avg_range * 1.60
-
-        # 2) Liquidity sweep: the sweep candle takes the accumulation low and closes back above it.
-        sweep_low = float(sweep["Low"])
-        sweep_close = float(sweep["Close"])
-        sweep_ok = sweep_low < acc_low and sweep_close > acc_low and sweep_close > float(sweep["Open"])
-
-        # 3) Recovery must hold above the swept low, creating a higher low.
-        recovery_ok = float(recovery["Low"]) > sweep_low and float(recovery["Close"]) > float(recovery["Open"])
-        higher_low_ok = float(recovery["Low"]) > sweep_low
-
-        # 4) Breakout: signal candle takes the accumulation high and closes above it.
-        signal_high = float(signal["High"])
-        signal_close = float(signal["Close"])
-        breakout_ok = signal_high > acc_high and signal_close > acc_high
-
-        # 5) Breakout candle must show real bullish participation.
-        signal_range = float(signal["High"] - signal["Low"])
-        signal_body = float(signal["Close"] - signal["Open"])
-        close_position = ((signal_close - float(signal["Low"])) / signal_range) if signal_range > 0 else 0.0
-        momentum_ok = signal_body > 0 and close_position >= 0.70 and signal_body / signal_range >= 0.50
-
-        checks = [compression_ok, sweep_ok, recovery_ok, higher_low_ok, breakout_ok, momentum_ok]
-        return all(checks), {
-            "Smart Accumulation Score": sum(checks),
-            "Smart Accumulation": compression_ok,
-            "Liquidity Sweep": sweep_ok,
-            "Sweep Recovery": recovery_ok,
-            "Higher Low": higher_low_ok,
-            "Range Breakout": breakout_ok,
-            "Breakout Momentum": momentum_ok
-        }
-    except Exception:
-        return False, {}
-
 def find_signal(intraday):
     if intraday.empty:
         return None
@@ -468,29 +325,22 @@ def find_signal(intraday):
     for pos in range(len(df) - 1, -1, -1):
         row = df.iloc[pos]
         ts = df.index[pos]
-        if pd.isna(row["Kijun"]) or pd.isna(row["Jaw"]) or pd.isna(row["Teeth"]) or pd.isna(row["Lips"]) or pd.isna(row["ADX"]) or pd.isna(row["Plus_DI"]) or pd.isna(row["Minus_DI"]):
+        if any(pd.isna(row[c]) for c in ["Kijun", "Jaw", "Teeth", "Lips", "ADX", "+DI", "-DI"]):
             continue
         adx_ok = float(row["ADX"]) >= float(adx_min)
         if require_adx_rising:
             if pos == 0 or pd.isna(df["ADX"].iloc[pos - 1]) or float(row["ADX"]) <= float(df["ADX"].iloc[pos - 1]):
                 adx_ok = False
-        if require_plus_di and float(row["Plus_DI"]) <= float(row["Minus_DI"]):
+        if require_plus_di and float(row["+DI"]) <= float(row["-DI"]):
             adx_ok = False
-        pressure_ok, pressure_info = price_pressure_confirmation(df, pos) if use_pressure_confirmation else (True, {})
-        smart_ok, smart_info = smart_accumulation_breakout(df, pos) if use_smart_accumulation else (True, {})
-        if adx_ok and pressure_ok and smart_ok and bool(row["Alligator_Bullish"]) and identify_long_green_candle(row) and kijun_crosses_through_candle(row) and float(row["Close"]) > float(row["Kijun"]):
+        if adx_ok and bool(row["Alligator_Bullish"]) and identify_long_green_candle(row) and kijun_crosses_through_candle(row) and float(row["Close"]) > float(row["Kijun"]):
             rng = float(row["High"] - row["Low"])
             return {
                 "Signal Time": ts, "Signal Price": float(row["Close"]),
-                "Open": float(row["Open"]), "High": float(row["High"]),
-                "Low": float(row["Low"]), "Close": float(row["Close"]),
-                "Kijun": float(row["Kijun"]), "Jaw": float(row["Jaw"]),
-                "Teeth": float(row["Teeth"]), "Lips": float(row["Lips"]),
-                "ADX": float(row["ADX"]), "Plus_DI": float(row["Plus_DI"]),
-                "Minus_DI": float(row["Minus_DI"]),
+                "Open": float(row["Open"]), "High": float(row["High"]), "Low": float(row["Low"]), "Close": float(row["Close"]),
+                "Kijun": float(row["Kijun"]), "Jaw": float(row["Jaw"]), "Teeth": float(row["Teeth"]), "Lips": float(row["Lips"]),
+                "ADX": float(row["ADX"]), "Plus_DI": float(row["+DI"]), "Minus_DI": float(row["-DI"]),
                 "Green Body %": ((float(row["Close"] - row["Open"]) / rng) * 100 if rng else 0),
-                "_pressure_info": pressure_info,
-                "_smart_info": smart_info,
                 "_signal_pos": pos
             }
     return None
@@ -536,21 +386,12 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
         if not signal:
             return None
         return {
-            "Symbol": symbol.replace(".NS", ""),
-            "_Green Color": green_color,
-            "Current Price": current_price,
-            "Previous Close": previous_close,
-            "Day-1 O2L%": float(previous_three["O2L%"].iloc[-1]),
-            "Day-2 O2L%": float(previous_three["O2L%"].iloc[-2]),
-            "Day-3 O2L%": float(previous_three["O2L%"].iloc[-3]),
-            "Signal Time": signal["Signal Time"],
-            "Signal Price": signal["Signal Price"],
-            "Kijun": signal["Kijun"],
-            "ADX": signal["ADX"],
-            "+DI": signal["Plus_DI"],
-            "-DI": signal["Minus_DI"],
-            "Green Body %": signal["Green Body %"],
-            "Alligator": "Bullish"
+            "Symbol": symbol.replace(".NS", ""), "_Green Color": green_color,
+            "Current Price": current_price, "Previous Close": previous_close,
+            "Day-1 O2L%": float(previous_three["O2L%"].iloc[-1]), "Day-2 O2L%": float(previous_three["O2L%"].iloc[-2]), "Day-3 O2L%": float(previous_three["O2L%"].iloc[-3]),
+            "Signal Time": signal["Signal Time"], "Signal Price": signal["Signal Price"], "Kijun": signal["Kijun"],
+            "ADX": signal["ADX"], "+DI": signal["Plus_DI"], "-DI": signal["Minus_DI"],
+            "Green Body %": signal["Green Body %"], "Alligator": "Bullish"
         }, signal
     except Exception:
         return None
@@ -564,13 +405,11 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
         results, details = [], []
         progress, status = st.progress(0), st.empty()
         total = len(saved_symbols)
-
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {executor.submit(scan_stock, r["Symbol"], r.get("Green Shade", "Green"), r.get("Green Color", "#00B050")): r for r in saved_universe}
             for i, future in enumerate(as_completed(futures), 1):
                 record = futures[future]
-                symbol = record["Symbol"]
-                status.write(f"Scanning green stock {symbol.replace('.NS', '')} — {i}/{total}")
+                status.write(f"Scanning green stock {record['Symbol'].replace('.NS', '')} — {i}/{total}")
                 try:
                     result = future.result()
                     if result:
@@ -583,9 +422,7 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
                 except Exception:
                     pass
                 progress.progress(i / total)
-
         status.success(f"Scan complete. Scanned only {total} saved green-shade stocks. {len(results)} BUY candidate(s) found.")
-
         if results:
             result_df = pd.DataFrame(results).sort_values(["Signal Time", "Green Body %"], ascending=[False, False])
             st.subheader(f"BUY Candidates ({len(result_df)})")
@@ -593,17 +430,13 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
             for col in ["Current Price", "Previous Close", "Signal Price", "Kijun", "ADX", "+DI", "-DI", "Backtest Return %"]:
                 if col in display_df.columns:
                     display_df[col] = pd.to_numeric(display_df[col], errors="coerce").map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
-
             result_color_map = {str(row["Symbol"]): str(row.get("_Green Color", "#00B050") or "#00B050") for _, row in result_df.iterrows()}
-
             def color_result_rows(row):
                 symbol = str(row["Symbol"])
                 color = result_color_map.get(symbol, "#00B050")
                 return [f"background-color: {color}; font-weight: 700" if col == "Symbol" else "" for col in display_df.columns]
-
             st.dataframe(display_df.style.apply(color_result_rows, axis=1), use_container_width=True, hide_index=True)
             st.download_button("⬇️ Download CSV", display_df.to_csv(index=False).encode("utf-8"), "buy_scan_results.csv", "text/csv")
-
             bt = result_df[result_df["Backtest Outcome"].isin(["Target", "Stop", "Neither", "Ambiguous"])].copy()
             if not bt.empty:
                 st.subheader("📊 Current Scan Backtest Check")
@@ -615,11 +448,7 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
                 x1.metric("Target Hits", target_count)
                 x2.metric("Stop Hits", stop_count)
                 x3.metric("Win Rate", f"{win_rate:.2f}%" if pd.notna(win_rate) else "N/A")
-                st.caption(
-                    f"Outcome test uses target {bt_target:.2f}%, stop {bt_stop:.2f}%, "
-                    f"and the next {int(bt_bars)} completed 3-minute candles. "
-                    "This is a forward check of the signals found in the current scan, not a full historical backtest."
-                )
+                st.caption(f"Outcome test uses target {bt_target:.2f}%, stop {bt_stop:.2f}%, and the next {int(bt_bars)} completed 3-minute candles. This is a forward check of the signals found in the current scan, not a full historical backtest.")
             for symbol, signal, outcome, outcome_pct in details:
                 with st.expander(f"🟢 {symbol} — {signal['Signal Time']}"):
                     a, b, c, d = st.columns(4)
@@ -640,7 +469,6 @@ Kijun crossing candle = Low <= Kijun <= High
 Signal Close > Kijun
 Current Price > Previous Daily Close
 ADX confirmation = ADX >= selected minimum, optionally rising, with +DI > -DI
-Smart Accumulation Breakout = 5-bar accumulation -> downside liquidity sweep -> recovery/higher low -> range breakout with strong close
 Backtest = target/stop outcome over selected number of subsequent 3-minute candles""")
 
 st.caption("Yahoo Finance/yfinance data. Screening signals are not guarantees of future price movement.")
