@@ -293,6 +293,15 @@ with st.sidebar:
     span_b_period = st.number_input("Span B", 2, 150, 52)
     min_body_percent = st.slider("Minimum long green candle body %", 20, 95, 60)
     kijun_tolerance = st.slider("Kijun candle tolerance %", 0.0, 2.0, 0.0, 0.1)
+    st.subheader("ADX Confirmation")
+    adx_period = st.number_input("ADX / DI period", 5, 50, 14)
+    adx_min = st.slider("Minimum ADX", 10.0, 40.0, 20.0, 1.0)
+    require_adx_rising = st.checkbox("Require ADX rising", value=True)
+    require_plus_di = st.checkbox("Require +DI > -DI", value=True)
+    st.subheader("Backtest")
+    bt_target = st.number_input("Backtest target %", 0.2, 10.0, 1.0, 0.1)
+    bt_stop = st.number_input("Backtest stop %", 0.2, 5.0, 0.5, 0.1)
+    bt_bars = st.number_input("Bars after signal", 1, 50, 10)
 
 def clean_columns(df):
     if df is None or df.empty:
@@ -334,6 +343,28 @@ def calculate_ichimoku(df):
     df["Span_B"] = (high.rolling(span_b_period).max() + low.rolling(span_b_period).min()) / 2
     return df
 
+def calculate_adx(df, period=None):
+    period = int(period or adx_period)
+    df = df.copy()
+    high, low, close = df["High"], df["Low"], df["Close"]
+    up_move = high.diff()
+    down_move = -low.diff()
+    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=df.index)
+    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=df.index)
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low - close.shift()).abs()
+    ], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    plus_smoothed = plus_dm.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    minus_smoothed = minus_dm.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    df["Plus_DI"] = 100 * plus_smoothed / atr.replace(0, np.nan)
+    df["Minus_DI"] = 100 * minus_smoothed / atr.replace(0, np.nan)
+    dx = 100 * (df["Plus_DI"] - df["Minus_DI"]).abs() / (df["Plus_DI"] + df["Minus_DI"]).replace(0, np.nan)
+    df["ADX"] = dx.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    return df
+
 def calculate_o2l(daily):
     daily = daily.copy()
     daily["O2L%"] = ((daily["Low"] - daily["Open"]) / daily["Open"]) * 100
@@ -367,11 +398,19 @@ def kijun_crosses_through_candle(row):
 def find_signal(intraday):
     if intraday.empty:
         return None
-    df = calculate_ichimoku(calculate_alligator(intraday))
-    for ts, row in df.iloc[::-1].iterrows():
-        if pd.isna(row["Kijun"]) or pd.isna(row["Jaw"]) or pd.isna(row["Teeth"]) or pd.isna(row["Lips"]):
+    df = calculate_adx(calculate_ichimoku(calculate_alligator(intraday)))
+    for pos in range(len(df) - 1, -1, -1):
+        row = df.iloc[pos]
+        ts = df.index[pos]
+        if pd.isna(row["Kijun"]) or pd.isna(row["Jaw"]) or pd.isna(row["Teeth"]) or pd.isna(row["Lips"]) or pd.isna(row["ADX"]) or pd.isna(row["Plus_DI"]) or pd.isna(row["Minus_DI"]):
             continue
-        if bool(row["Alligator_Bullish"]) and identify_long_green_candle(row) and kijun_crosses_through_candle(row) and float(row["Close"]) > float(row["Kijun"]):
+        adx_ok = float(row["ADX"]) >= float(adx_min)
+        if require_adx_rising:
+            if pos == 0 or pd.isna(df["ADX"].iloc[pos - 1]) or float(row["ADX"]) <= float(df["ADX"].iloc[pos - 1]):
+                adx_ok = False
+        if require_plus_di and float(row["Plus_DI"]) <= float(row["Minus_DI"]):
+            adx_ok = False
+        if adx_ok and bool(row["Alligator_Bullish"]) and identify_long_green_candle(row) and kijun_crosses_through_candle(row) and float(row["Close"]) > float(row["Kijun"]):
             rng = float(row["High"] - row["Low"])
             return {
                 "Signal Time": ts, "Signal Price": float(row["Close"]),
@@ -379,9 +418,34 @@ def find_signal(intraday):
                 "Low": float(row["Low"]), "Close": float(row["Close"]),
                 "Kijun": float(row["Kijun"]), "Jaw": float(row["Jaw"]),
                 "Teeth": float(row["Teeth"]), "Lips": float(row["Lips"]),
-                "Green Body %": ((float(row["Close"] - row["Open"]) / rng) * 100 if rng else 0)
+                "ADX": float(row["ADX"]), "Plus_DI": float(row["Plus_DI"]),
+                "Minus_DI": float(row["Minus_DI"]),
+                "Green Body %": ((float(row["Close"] - row["Open"]) / rng) * 100 if rng else 0),
+                "_signal_pos": pos
             }
     return None
+
+def evaluate_signal_outcome(intraday, signal):
+    try:
+        pos = int(signal["_signal_pos"])
+        entry = float(signal["Signal Price"])
+        future = intraday.iloc[pos + 1:pos + 1 + int(bt_bars)]
+        if future.empty:
+            return "No future data", np.nan
+        target = entry * (1 + float(bt_target) / 100)
+        stop = entry * (1 - float(bt_stop) / 100)
+        for _, bar in future.iterrows():
+            hit_target = float(bar["High"]) >= target
+            hit_stop = float(bar["Low"]) <= stop
+            if hit_target and hit_stop:
+                return "Ambiguous", np.nan
+            if hit_target:
+                return "Target", float(bt_target)
+            if hit_stop:
+                return "Stop", -float(bt_stop)
+        return "Neither", 0.0
+    except Exception:
+        return "Unknown", np.nan
 
 def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
     try:
@@ -412,6 +476,9 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
             "Signal Time": signal["Signal Time"],
             "Signal Price": signal["Signal Price"],
             "Kijun": signal["Kijun"],
+            "ADX": signal["ADX"],
+            "+DI": signal["Plus_DI"],
+            "-DI": signal["Minus_DI"],
             "Green Body %": signal["Green Body %"],
             "Alligator": "Bullish"
         }, signal
@@ -438,8 +505,11 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
                     result = future.result()
                     if result:
                         row, signal = result
+                        outcome, outcome_pct = evaluate_signal_outcome(get_intraday_data(record["Symbol"]), signal)
+                        row["Backtest Outcome"] = outcome
+                        row["Backtest Return %"] = outcome_pct
                         results.append(row)
-                        details.append((row["Symbol"], signal))
+                        details.append((row["Symbol"], signal, outcome, outcome_pct))
                 except Exception:
                     pass
                 progress.progress(i / total)
@@ -453,7 +523,7 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
             display_df = result_df.drop(columns=["_Green Color"], errors="ignore").copy()
 
             # Display price fields with exactly 2 decimal places.
-            for col in ["Current Price", "Previous Close", "Signal Price", "Kijun"]:
+            for col in ["Current Price", "Previous Close", "Signal Price", "Kijun", "ADX", "+DI", "-DI", "Backtest Return %"]:
                 if col in display_df.columns:
                     display_df[col] = pd.to_numeric(display_df[col], errors="coerce").map(
                         lambda x: f"{x:.2f}" if pd.notna(x) else ""
@@ -483,13 +553,31 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
                 "buy_scan_results.csv",
                 "text/csv"
             )
-            for symbol, signal in details:
+
+            bt = result_df[result_df["Backtest Outcome"].isin(["Target", "Stop", "Neither", "Ambiguous"])].copy()
+            if not bt.empty:
+                st.subheader("📊 Current Scan Backtest Check")
+                target_count = int((bt["Backtest Outcome"] == "Target").sum())
+                stop_count = int((bt["Backtest Outcome"] == "Stop").sum())
+                evaluated = target_count + stop_count
+                win_rate = (target_count / evaluated * 100) if evaluated else np.nan
+                x1, x2, x3 = st.columns(3)
+                x1.metric("Target Hits", target_count)
+                x2.metric("Stop Hits", stop_count)
+                x3.metric("Win Rate", f"{win_rate:.2f}%" if pd.notna(win_rate) else "N/A")
+                st.caption(
+                    f"Outcome test uses target {bt_target:.2f}%, stop {bt_stop:.2f}%, "
+                    f"and the next {int(bt_bars)} completed 3-minute candles. "
+                    "This is a forward check of the signals found in the current scan, not a full historical backtest."
+                )
+            for symbol, signal, outcome, outcome_pct in details:
                 with st.expander(f"🟢 {symbol} — {signal['Signal Time']}"):
-                    a, b, c = st.columns(3)
+                    a, b, c, d = st.columns(4)
                     a.metric("Signal Price", f"{signal['Signal Price']:.2f}")
                     b.metric("Kijun", f"{signal['Kijun']:.2f}")
-                    c.metric("Green Body", f"{signal['Green Body %']:.2f}%")
-                    st.write({k: round(v, 2) if isinstance(v, (int, float, np.floating)) else v for k, v in signal.items()})
+                    c.metric("ADX", f"{signal['ADX']:.2f}")
+                    d.metric("Backtest", outcome)
+                    st.write({k: round(v, 2) if isinstance(v, (int, float, np.floating)) else v for k, v in signal.items() if not k.startswith("_")})
         else:
             st.warning("No saved green stocks matched all BUY conditions.")
 
@@ -500,6 +588,8 @@ Kijun = (Highest High over 26 + Lowest Low over 26) / 2
 Long green candle = Close > Open and body/range >= selected threshold
 Kijun crossing candle = Low <= Kijun <= High
 Signal Close > Kijun
-Current Price > Previous Daily Close""")
+Current Price > Previous Daily Close
+ADX confirmation = ADX >= selected minimum, optionally rising, with +DI > -DI
+Backtest = target/stop outcome over selected number of subsequent 3-minute candles""")
 
 st.caption("Yahoo Finance/yfinance data. Screening signals are not guarantees of future price movement.")
