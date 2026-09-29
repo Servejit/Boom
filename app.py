@@ -255,11 +255,25 @@ meta = load_meta()
 
 if saved_universe:
     st.success(f"ACTIVE UNIVERSE: {len(saved_universe)} green stocks | File: {meta.get('filename','saved file')} | Next upload will replace this list.")
-    universe_df = pd.DataFrame({"Green Stocks": [r["Symbol"].replace(".NS","") for r in saved_universe], "Uploaded Green Shade": [r.get("Green Shade","Green") for r in saved_universe], "Green Color": [r.get("Green Color","#00B050") for r in saved_universe]})
-    def color_rows(row):
-        color = str(row["Green Color"])
-        return [f"background-color: {color}; font-weight: 700" if col in ["Green Stocks", "Uploaded Green Shade", "Green Color"] else "" for col in universe_df.columns]
-    st.dataframe(universe_df.style.apply(color_rows, axis=1), use_container_width=True, hide_index=True)
+    universe_df = pd.DataFrame({
+        "Green Stocks": [r["Symbol"].replace(".NS","") for r in saved_universe]
+    })
+
+    color_map = {
+        r["Symbol"].replace(".NS",""): r.get("Green Color", "#00B050") or "#00B050"
+        for r in saved_universe
+    }
+
+    def color_universe_rows(row):
+        symbol = str(row["Green Stocks"])
+        color = color_map.get(symbol, "#00B050")
+        return [f"background-color: {color}; font-weight: 700"]
+
+    st.dataframe(
+        universe_df.style.apply(color_universe_rows, axis=1),
+        use_container_width=True,
+        hide_index=True
+    )
 else:
     st.warning("No stock file is saved yet. Upload your file to create the green-stock scanning universe.")
 
@@ -389,8 +403,7 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
             return None
         return {
             "Symbol": symbol.replace(".NS", ""),
-            "Green Shade": green_shade,
-            "Green Color": green_color,
+            "_Green Color": green_color,
             "Current Price": current_price,
             "Previous Close": previous_close,
             "Day-1 O2L%": float(previous_three["O2L%"].iloc[-1]),
@@ -436,11 +449,32 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
         if results:
             result_df = pd.DataFrame(results).sort_values(["Signal Time", "Green Body %"], ascending=[False, False])
             st.subheader(f"BUY Candidates ({len(result_df)})")
+
+            display_df = result_df.drop(columns=["_Green Color"], errors="ignore").copy()
+            result_color_map = {
+                str(row["Symbol"]): str(row.get("_Green Color", "#00B050") or "#00B050")
+                for _, row in result_df.iterrows()
+            }
+
             def color_result_rows(row):
-                color = str(row.get("Green Color", "#00B050"))
-                return [f"background-color: {color}; font-weight: 700" if col in ["Symbol", "Green Shade", "Green Color"] else "" for col in result_df.columns]
-            st.dataframe(result_df.style.apply(color_result_rows, axis=1), use_container_width=True, hide_index=True)
-            st.download_button("⬇️ Download CSV", result_df.to_csv(index=False).encode("utf-8"), "buy_scan_results.csv", "text/csv")
+                symbol = str(row["Symbol"])
+                color = result_color_map.get(symbol, "#00B050")
+                return [
+                    f"background-color: {color}; font-weight: 700" if col == "Symbol" else ""
+                    for col in display_df.columns
+                ]
+
+            st.dataframe(
+                display_df.style.apply(color_result_rows, axis=1),
+                use_container_width=True,
+                hide_index=True
+            )
+            st.download_button(
+                "⬇️ Download CSV",
+                display_df.to_csv(index=False).encode("utf-8"),
+                "buy_scan_results.csv",
+                "text/csv"
+            )
             for symbol, signal in details:
                 with st.expander(f"🟢 {symbol} — {signal['Signal Time']}"):
                     a, b, c = st.columns(3)
