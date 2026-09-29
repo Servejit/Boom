@@ -451,6 +451,14 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
             st.subheader(f"BUY Candidates ({len(result_df)})")
 
             display_df = result_df.drop(columns=["_Green Color"], errors="ignore").copy()
+
+            # Display price fields with exactly 2 decimal places.
+            for col in ["Current Price", "Previous Close", "Signal Price", "Kijun"]:
+                if col in display_df.columns:
+                    display_df[col] = pd.to_numeric(display_df[col], errors="coerce").map(
+                        lambda x: f"{x:.2f}" if pd.notna(x) else ""
+                    )
+
             result_color_map = {
                 str(row["Symbol"]): str(row.get("_Green Color", "#00B050") or "#00B050")
                 for _, row in result_df.iterrows()
