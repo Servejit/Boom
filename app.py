@@ -358,22 +358,43 @@ def analyze_1h_perspective(hourly):
     }
     if hourly is None or hourly.empty or len(hourly) < 4:
         return empty
+
+    # Exact sequence:
+    # Red 3 -> Red 2 -> Red 1 -> Current Green
+    # Red 1 is immediately before the current 1H candle.
     cur = hourly.iloc[-1]
-    prev = hourly.iloc[-4:-1]
+    red1 = hourly.iloc[-2]
+    red2 = hourly.iloc[-3]
+    red3 = hourly.iloc[-4]
+    prev = [red1, red2, red3]
+
     current_green = float(cur["Close"]) > float(cur["Open"])
-    red_flags = [float(r["Close"]) < float(r["Open"]) for _, r in prev.iterrows()]
+    red_flags = [
+        float(red1["Close"]) < float(red1["Open"]),
+        float(red2["Close"]) < float(red2["Open"]),
+        float(red3["Close"]) < float(red3["Open"]),
+    ]
+
     above_low = []
-    for _, r in prev.iterrows():
+    for r in prev:
         low = float(r["Low"])
         close = float(r["Close"])
         above_low.append(((close - low) / low * 100.0) if low > 0 else np.nan)
-    ready = bool(current_green and len(red_flags) == 3 and all(red_flags) and all(pd.notna(x) for x in above_low))
+
+    ready = bool(
+        current_green
+        and all(red_flags)
+        and all(pd.notna(x) for x in above_low)
+    )
+
     return {
         "1H Current": "Green" if current_green else "Red",
         "1H Red-1": "Red" if red_flags[0] else "Green",
         "1H Red-2": "Red" if red_flags[1] else "Green",
         "1H Red-3": "Red" if red_flags[2] else "Green",
-        "1H Red-1 Above Low %": float(above_low[0]), "1H Red-2 Above Low %": float(above_low[1]), "1H Red-3 Above Low %": float(above_low[2]),
+        "1H Red-1 Above Low %": float(above_low[0]),
+        "1H Red-2 Above Low %": float(above_low[1]),
+        "1H Red-3 Above Low %": float(above_low[2]),
         "1H Perspective Ready": ready,
     }
 
