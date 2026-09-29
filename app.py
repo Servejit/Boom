@@ -302,6 +302,13 @@ with st.sidebar:
     bt_target = st.number_input("Backtest target %", 0.2, 10.0, 1.0, 0.1)
     bt_stop = st.number_input("Backtest stop %", 0.2, 5.0, 0.5, 0.1)
     bt_bars = st.number_input("Bars after signal", 1, 50, 10)
+    st.subheader("Price Pressure / Breakout")
+    use_pressure_confirmation = st.checkbox("Use price pressure confirmation", value=True)
+    pressure_lookback = st.number_input("Compression lookback bars", 3, 20, 5)
+    pressure_range_factor = st.slider("Max compression range vs average", 0.40, 1.00, 0.75, 0.05)
+    pressure_breakout_bars = st.number_input("Breakout lookback bars", 2, 20, 5)
+    pressure_close_position = st.slider("Minimum close position in candle", 0.60, 0.98, 0.70, 0.05)
+    pressure_min_expansion = st.slider("Minimum signal range vs compression", 1.00, 3.00, 1.20, 0.05)
 
 def clean_columns(df):
     if df is None or df.empty:
@@ -395,6 +402,27 @@ def kijun_crosses_through_candle(row):
     tol = abs(float(k)) * kijun_tolerance / 100.0
     return float(row["Low"]) - tol <= float(k) <= float(row["High"]) + tol
 
+def price_pressure_confirmation(df, pos):
+    """Additional price-action confirmation: compression, expansion, breakout and strong close."""
+    try:
+        lb = int(pressure_lookback); blb = int(pressure_breakout_bars)
+        if pos < max(lb, blb) + 1: return False, {}
+        ranges = (df["High"] - df["Low"]).astype(float)
+        signal = df.iloc[pos]; prior_high = float(df["High"].iloc[pos-blb:pos].max())
+        compression = ranges.iloc[pos-lb:pos].dropna(); signal_range = float(signal["High"] - signal["Low"])
+        if len(compression) < lb or signal_range <= 0: return False, {}
+        avg_range = float(compression.mean())
+        compressed = avg_range > 0 and float(compression.iloc[-1]) <= avg_range * float(pressure_range_factor)
+        breakout = float(signal["High"]) > prior_high
+        close_position = (float(signal["Close"]) - float(signal["Low"])) / signal_range
+        strong_close = close_position >= float(pressure_close_position)
+        expansion = avg_range > 0 and signal_range >= avg_range * float(pressure_min_expansion)
+        upper_wick = float(signal["High"]) - float(signal["Close"]); body = float(signal["Close"]) - float(signal["Open"])
+        limited_rejection = body > 0 and upper_wick <= body
+        checks = [compressed, breakout, strong_close, expansion, limited_rejection]
+        return all(checks), {"Pressure Score": sum(checks), "Pressure Compression": compressed, "Pressure Breakout": breakout, "Pressure Strong Close": strong_close, "Pressure Expansion": expansion, "Pressure Limited Rejection": limited_rejection}
+    except Exception:
+        return False, {}
 def find_signal(intraday):
     if intraday.empty:
         return None
@@ -410,7 +438,8 @@ def find_signal(intraday):
                 adx_ok = False
         if require_plus_di and float(row["Plus_DI"]) <= float(row["Minus_DI"]):
             adx_ok = False
-        if adx_ok and bool(row["Alligator_Bullish"]) and identify_long_green_candle(row) and kijun_crosses_through_candle(row) and float(row["Close"]) > float(row["Kijun"]):
+        pressure_ok, pressure_info = price_pressure_confirmation(df, pos) if use_pressure_confirmation else (True, {})
+        if adx_ok and pressure_ok and bool(row["Alligator_Bullish"]) and identify_long_green_candle(row) and kijun_crosses_through_candle(row) and float(row["Close"]) > float(row["Kijun"]):
             rng = float(row["High"] - row["Low"])
             return {
                 "Signal Time": ts, "Signal Price": float(row["Close"]),
@@ -421,6 +450,7 @@ def find_signal(intraday):
                 "ADX": float(row["ADX"]), "Plus_DI": float(row["Plus_DI"]),
                 "Minus_DI": float(row["Minus_DI"]),
                 "Green Body %": ((float(row["Close"] - row["Open"]) / rng) * 100 if rng else 0),
+                "_pressure_info": pressure_info,
                 "_signal_pos": pos
             }
     return None
