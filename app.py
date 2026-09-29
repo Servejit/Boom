@@ -130,77 +130,64 @@ def extract_green_stocks(df):
 
     return list(dict.fromkeys(green_rows))
 
+def color_to_label(color):
+    if color is None:
+        return ""
+    try:
+        if color.type == "rgb" and color.rgb:
+            return "#" + color.rgb[-6:].upper()
+        if color.type == "indexed" and color.indexed is not None:
+            return f"Indexed:{color.indexed}"
+        if color.type == "theme" and color.theme is not None:
+            tint = getattr(color, "tint", 0) or 0
+            return f"Theme:{color.theme}" + (f" Tint:{tint:g}" if tint else "")
+    except Exception:
+        pass
+    return ""
+
+def fill_green_info(cell):
+    fill = cell.fill
+    if fill and fill.fill_type:
+        fg = fill.fgColor
+        label = color_to_label(fg)
+        if fg.type == "rgb" and fg.rgb and is_green_value("#" + fg.rgb[-6:]):
+            return True, label
+        if fg.type == "indexed" and fg.indexed is not None and fg.indexed in {3,4,35,36,43,44,50,51}:
+            return True, label
+        if fg.type == "theme" and getattr(fg, "rgb", None) and is_green_value("#" + fg.rgb[-6:]):
+            return True, label
+    if is_green_value(cell.value):
+        return True, str(cell.value).strip()
+    return False, ""
+
 def extract_green_stocks_from_excel(uploaded_bytes, filename):
-    """Read actual Excel cell fill colors, including green shades."""
     try:
         from openpyxl import load_workbook
         import io
         wb = load_workbook(io.BytesIO(uploaded_bytes), data_only=True)
         ws = wb.active
-
         headers = [cell.value for cell in ws[1]]
         symbol_col = detect_symbol_column(pd.DataFrame(columns=headers))
-        if symbol_col is None:
-            # Common fallback: first column.
-            symbol_idx = 1
-        else:
-            symbol_idx = headers.index(symbol_col) + 1
-
-        symbols = []
+        symbol_idx = headers.index(symbol_col) + 1 if symbol_col is not None else 1
+        records = []
         for r in range(2, ws.max_row + 1):
-            raw = ws.cell(r, symbol_idx).value
-            symbol = normalize_symbol(raw)
+            symbol = normalize_symbol(ws.cell(r, symbol_idx).value)
             if not symbol:
                 continue
-
-            row_green = False
             for c in range(1, ws.max_column + 1):
-                cell = ws.cell(r, c)
-                fill = cell.fill
-                if fill and fill.fill_type:
-                    fg = fill.fgColor
-                    candidates = []
-                    if fg.type == "rgb" and fg.rgb:
-                        candidates.append(fg.rgb[-6:])
-                    elif fg.type == "indexed" and fg.indexed is not None:
-                        # Common Excel indexed greens.
-                        if fg.indexed in {3, 4, 35, 36, 43, 44, 50, 51}:
-                            row_green = True
-                    elif fg.type == "theme":
-                        # Theme colors are not reliably named; inspect tint plus
-                        # the cell's displayed RGB when possible.
-                        try:
-                            rgb = fg.rgb
-                            if rgb:
-                                candidates.append(rgb[-6:])
-                        except Exception:
-                            pass
-                    for h in candidates:
-                        if is_green_value("#" + h):
-                            row_green = True
-                            break
-                if row_green:
+                green, shade = fill_green_info(ws.cell(r, c))
+                if green:
+                    records.append({"Symbol": symbol, "Green Shade": shade or "Green"})
                     break
-
-                if is_green_value(cell.value):
-                    row_green = True
-                    break
-
-            if row_green:
-                symbols.append(symbol)
-
-        return list(dict.fromkeys(symbols))
+        return records
     except Exception:
         return []
 
-def save_universe(symbols, original_filename):
-    pd.DataFrame({"Symbol": symbols}).to_csv(UNIVERSE_FILE, index=False)
-    meta = {
-        "filename": original_filename,
-        "count": len(symbols),
-        "updated": pd.Timestamp.now().isoformat(),
-        "hash": hashlib.sha256("|".join(symbols).encode()).hexdigest()
-    }
+def save_universe(records, original_filename):
+    pd.DataFrame(records).drop_duplicates(subset=["Symbol"]).to_csv(UNIVERSE_FILE, index=False)
+    symbols = [r["Symbol"] for r in records]
+    meta = {"filename": original_filename, "count": len(symbols), "updated": pd.Timestamp.now().isoformat(),
+            "hash": hashlib.sha256("|".join(symbols).encode()).hexdigest()}
     UNIVERSE_META.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
 def load_saved_universe():
@@ -208,7 +195,11 @@ def load_saved_universe():
         return []
     try:
         df = pd.read_csv(UNIVERSE_FILE)
-        return [x for x in df["Symbol"].dropna().astype(str).tolist() if x]
+        if "Symbol" not in df.columns:
+            return []
+        if "Green Shade" not in df.columns:
+            df["Green Shade"] = "Green"
+        return df[["Symbol", "Green Shade"]].fillna("").to_dict("records")
     except Exception:
         return []
 
@@ -219,6 +210,7 @@ def load_meta():
         return json.loads(UNIVERSE_META.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
 
 st.title("📈 3-Minute Bullish BUY Scanner")
 st.subheader("🟢 Green-Stock Universe")
@@ -233,31 +225,34 @@ with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_uni
         try:
             raw_bytes = uploaded.getvalue()
             if uploaded.name.lower().endswith((".xlsx", ".xls")):
-                symbols = extract_green_stocks_from_excel(raw_bytes, uploaded.name)
-                if not symbols:
+                records = extract_green_stocks_from_excel(raw_bytes, uploaded.name)
+                if not records:
                     # Fallback to textual/status interpretation.
                     import io
                     df_upload = pd.read_excel(io.BytesIO(raw_bytes))
                     symbols = extract_green_stocks(df_upload)
+                    records = [{"Symbol": s, "Green Shade": "Green"} for s in symbols]
             else:
                 import io
                 df_upload = pd.read_csv(io.BytesIO(raw_bytes))
                 symbols = extract_green_stocks(df_upload)
+                records = [{"Symbol": s, "Green Shade": "Green"} for s in symbols]
 
-            if symbols:
-                save_universe(symbols, uploaded.name)
-                st.success(f"Saved {len(symbols)} green-shade stocks from {uploaded.name}. This list will remain active until the next upload.")
+            if records:
+                save_universe(records, uploaded.name)
+                st.success(f"Saved {len(records)} green-shade stocks from {uploaded.name}. This list will remain active until the next upload.")
             else:
                 st.error("No green-shade stocks were detected. For Excel, make sure the stock rows/cells are actually filled with green.")
         except Exception as e:
             st.error(f"Could not process the file: {e}")
 
-saved_symbols = load_saved_universe()
+saved_universe = load_saved_universe()
+saved_symbols = [r["Symbol"] for r in saved_universe]
 meta = load_meta()
 
-if saved_symbols:
-    st.success(f"ACTIVE UNIVERSE: {len(saved_symbols)} green stocks | File: {meta.get('filename','saved file')} | Next upload will replace this list.")
-    st.dataframe(pd.DataFrame({"Green Stocks": [s.replace(".NS","") for s in saved_symbols]}), use_container_width=True, hide_index=True)
+if saved_universe:
+    st.success(f"ACTIVE UNIVERSE: {len(saved_universe)} green stocks | File: {meta.get('filename','saved file')} | Next upload will replace this list.")
+    st.dataframe(pd.DataFrame({"Green Stocks": [r["Symbol"].replace(".NS","") for r in saved_universe], "Uploaded Green Shade": [r.get("Green Shade","Green") for r in saved_universe]}), use_container_width=True, hide_index=True)
 else:
     st.warning("No stock file is saved yet. Upload your file to create the green-stock scanning universe.")
 
@@ -367,7 +362,7 @@ def find_signal(intraday):
             }
     return None
 
-def scan_stock(symbol):
+def scan_stock(symbol, green_shade="Green"):
     try:
         daily = calculate_o2l(get_daily_data(symbol))
         if daily.empty or len(daily) < 5:
@@ -387,6 +382,7 @@ def scan_stock(symbol):
             return None
         return {
             "Symbol": symbol.replace(".NS", ""),
+            "Green Shade": green_shade,
             "Current Price": current_price,
             "Previous Close": previous_close,
             "Day-1 O2L%": float(previous_three["O2L%"].iloc[-1]),
@@ -412,9 +408,10 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
         total = len(saved_symbols)
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(scan_stock, s): s for s in saved_symbols}
+            futures = {executor.submit(scan_stock, r["Symbol"], r.get("Green Shade","Green")): r for r in saved_universe}
             for i, future in enumerate(as_completed(futures), 1):
-                symbol = futures[future]
+                record = futures[future]
+                symbol = record["Symbol"]
                 status.write(f"Scanning green stock {symbol.replace('.NS','')} — {i}/{total}")
                 try:
                     result = future.result()
