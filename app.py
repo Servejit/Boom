@@ -205,30 +205,51 @@ else:
     st.warning("No stock file is saved yet. Upload your file to create the green-stock scanning universe.")
 
 with st.sidebar:
-    st.header("Scanner Settings")
-    workers = st.slider("Parallel workers", 1, 10, 5)
-    st.subheader("Alligator")
-    jaw_period = st.number_input("Jaw period", 2, 50, 13)
-    jaw_shift = st.number_input("Jaw shift", 0, 20, 8)
-    teeth_period = st.number_input("Teeth period", 2, 50, 8)
-    teeth_shift = st.number_input("Teeth shift", 0, 20, 5)
-    lips_period = st.number_input("Lips period", 2, 50, 5)
-    lips_shift = st.number_input("Lips shift", 0, 20, 3)
-    st.subheader("Ichimoku")
-    conversion_period = st.number_input("Conversion / Tenkan", 2, 100, 9)
-    base_period = st.number_input("Base / Kijun", 2, 100, 26)
-    span_b_period = st.number_input("Span B", 2, 150, 52)
-    min_body_percent = st.slider("Minimum long green candle body %", 20, 95, 60)
-    kijun_tolerance = st.slider("Kijun candle tolerance %", 0.0, 2.0, 0.0, 0.1)
-    st.subheader("ADX Confirmation")
-    adx_period = st.number_input("ADX / DI period", 5, 50, 14)
-    adx_min = st.slider("Minimum ADX", 10.0, 40.0, 20.0, 1.0)
-    require_adx_rising = st.checkbox("Require ADX rising", value=True)
-    require_plus_di = st.checkbox("Require +DI > -DI", value=True)
-    st.subheader("Backtest")
-    bt_target = st.number_input("Backtest target %", 0.2, 10.0, 1.0, 0.1)
-    bt_stop = st.number_input("Backtest stop %", 0.2, 5.0, 0.5, 0.1)
-    bt_bars = st.number_input("Bars after signal", 1, 50, 10)
+    st.header("Scanner Controls")
+
+    scan_on = st.checkbox("🟢 Scanner ON", value=True)
+    show_backtest = st.checkbox("📊 Backtest ON", value=True)
+
+    with st.expander("⚙️ Scanner Details", expanded=False):
+        workers = st.slider("Parallel workers", 1, 10, 5)
+
+        st.markdown("**Alligator settings**")
+        jaw_period = st.number_input("Jaw period", 2, 50, 13)
+        jaw_shift = st.number_input("Jaw shift", 0, 20, 8)
+        teeth_period = st.number_input("Teeth period", 2, 50, 8)
+        teeth_shift = st.number_input("Teeth shift", 0, 20, 5)
+        lips_period = st.number_input("Lips period", 2, 50, 5)
+        lips_shift = st.number_input("Lips shift", 0, 20, 3)
+
+        st.markdown("**Ichimoku settings**")
+        conversion_period = st.number_input("Conversion / Tenkan", 2, 100, 9)
+        base_period = st.number_input("Base / Kijun", 2, 100, 26)
+        span_b_period = st.number_input("Span B", 2, 150, 52)
+        min_body_percent = st.slider("Minimum long green candle body %", 20, 95, 60)
+        kijun_tolerance = st.slider("Kijun candle tolerance %", 0.0, 2.0, 0.0, 0.1)
+
+        st.markdown("**ADX settings**")
+        adx_period = st.number_input("ADX / DI period", 5, 50, 14)
+        adx_min = st.slider("Minimum ADX", 10.0, 40.0, 20.0, 1.0)
+        require_adx_rising = st.checkbox("Require ADX rising", value=True)
+        require_plus_di = st.checkbox("Require +DI > -DI", value=True)
+
+        st.markdown("**Backtest settings**")
+        bt_target = st.number_input("Backtest target %", 0.2, 10.0, 1.0, 0.1)
+        bt_stop = st.number_input("Backtest stop %", 0.2, 5.0, 0.5, 0.1)
+        bt_bars = st.number_input("Bars after signal", 1, 50, 10)
+
+# Safe defaults when the details panel is left closed.
+if "workers" not in locals():
+    workers = 5
+if "jaw_period" not in locals():
+    jaw_period, jaw_shift, teeth_period, teeth_shift, lips_period, lips_shift = 13, 8, 8, 5, 5, 3
+if "conversion_period" not in locals():
+    conversion_period, base_period, span_b_period, min_body_percent, kijun_tolerance = 9, 26, 52, 60, 0.0
+if "adx_period" not in locals():
+    adx_period, adx_min, require_adx_rising, require_plus_di = 14, 20.0, True, True
+if "bt_target" not in locals():
+    bt_target, bt_stop, bt_bars = 1.0, 0.5, 10
 
 def clean_columns(df):
     if df is None or df.empty:
@@ -399,6 +420,9 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
 st.info("Only the saved green-shade stock universe is scanned. The saved file/list is retained until a new upload replaces it.")
 
 if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
+    if not scan_on:
+        st.info("Scanner is OFF. Turn Scanner ON from the sidebar to run it.")
+        st.stop()
     if not saved_symbols:
         st.error("Upload a stock file containing green-shade stocks first.")
     else:
@@ -414,7 +438,7 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
                     result = future.result()
                     if result:
                         row, signal = result
-                        outcome, outcome_pct = evaluate_signal_outcome(get_intraday_data(record["Symbol"]), signal)
+                        outcome, outcome_pct = evaluate_signal_outcome(get_intraday_data(record["Symbol"]), signal) if show_backtest else ("Not Run", np.nan)
                         row["Backtest Outcome"] = outcome
                         row["Backtest Return %"] = outcome_pct
                         results.append(row)
