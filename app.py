@@ -209,6 +209,7 @@ with st.sidebar:
 
     scan_on = st.checkbox("🟢 Scanner ON", value=True)
     show_backtest = st.checkbox("📊 Backtest ON", value=True)
+    perspective_1h_on = st.checkbox("🕐 1H Perspective", value=False)
 
     with st.expander("⚙️ Scanner Details", expanded=False):
         workers = st.slider("Parallel workers", 1, 10, 5)
@@ -239,6 +240,12 @@ with st.sidebar:
         bt_stop = st.number_input("Backtest stop %", 0.2, 5.0, 0.5, 0.1)
         bt_bars = st.number_input("Bars after signal", 1, 50, 10)
 
+        st.markdown("**1H Perspective thresholds**")
+        h1_025 = st.checkbox("0.25% above Low", value=True)
+        h1_050 = st.checkbox("0.50% above Low", value=True)
+        h1_075 = st.checkbox("0.75% above Low", value=True)
+        h1_100 = st.checkbox("1.00% above Low", value=True)
+
 # Safe defaults when the details panel is left closed.
 if "workers" not in locals():
     workers = 5
@@ -250,6 +257,8 @@ if "adx_period" not in locals():
     adx_period, adx_min, require_adx_rising, require_plus_di = 14, 20.0, True, True
 if "bt_target" not in locals():
     bt_target, bt_stop, bt_bars = 1.0, 0.5, 10
+if "h1_025" not in locals():
+    h1_025, h1_050, h1_075, h1_100 = True, True, True, True
 
 def clean_columns(df):
     if df is None or df.empty:
@@ -326,6 +335,66 @@ def get_intraday_data(symbol):
         return resample_to_3min(x) if not x.empty else pd.DataFrame()
     except Exception:
         return pd.DataFrame()
+
+def get_1h_data(symbol):
+    """Download 1-hour candles once for this stock during a scan."""
+    try:
+        x = clean_columns(yf.download(symbol, period="60d", interval="1h", auto_adjust=False, progress=False, threads=False))
+        if x.empty:
+            return pd.DataFrame()
+        if not isinstance(x.index, pd.DatetimeIndex):
+            x.index = pd.to_datetime(x.index)
+        if getattr(x.index, "tz", None) is not None:
+            x.index = x.index.tz_convert("Asia/Kolkata").tz_localize(None)
+        return x.dropna(subset=["Open", "High", "Low", "Close"]).copy()
+    except Exception:
+        return pd.DataFrame()
+
+def analyze_1h_perspective(hourly):
+    empty = {
+        "1H Current": "N/A", "1H Red-1": "N/A", "1H Red-2": "N/A", "1H Red-3": "N/A",
+        "1H Red-1 Above Low %": np.nan, "1H Red-2 Above Low %": np.nan, "1H Red-3 Above Low %": np.nan,
+        "1H Perspective Ready": False,
+    }
+    if hourly is None or hourly.empty or len(hourly) < 4:
+        return empty
+    cur = hourly.iloc[-1]
+    prev = hourly.iloc[-4:-1]
+    current_green = float(cur["Close"]) > float(cur["Open"])
+    red_flags = [float(r["Close"]) < float(r["Open"]) for _, r in prev.iterrows()]
+    above_low = []
+    for _, r in prev.iterrows():
+        low = float(r["Low"])
+        close = float(r["Close"])
+        above_low.append(((close - low) / low * 100.0) if low > 0 else np.nan)
+    ready = bool(current_green and len(red_flags) == 3 and all(red_flags) and all(pd.notna(x) for x in above_low))
+    return {
+        "1H Current": "Green" if current_green else "Red",
+        "1H Red-1": "Red" if red_flags[0] else "Green",
+        "1H Red-2": "Red" if red_flags[1] else "Green",
+        "1H Red-3": "Red" if red_flags[2] else "Green",
+        "1H Red-1 Above Low %": float(above_low[0]), "1H Red-2 Above Low %": float(above_low[1]), "1H Red-3 Above Low %": float(above_low[2]),
+        "1H Perspective Ready": ready,
+    }
+
+def selected_1h_thresholds():
+    out = []
+    if h1_025: out.append(0.25)
+    if h1_050: out.append(0.50)
+    if h1_075: out.append(0.75)
+    if h1_100: out.append(1.00)
+    return out
+
+def passes_1h_perspective(row):
+    if not perspective_1h_on:
+        return True
+    if not bool(row.get("1H Perspective Ready", False)):
+        return False
+    thresholds = selected_1h_thresholds()
+    if not thresholds:
+        return False
+    values = [row.get("1H Red-1 Above Low %", np.nan), row.get("1H Red-2 Above Low %", np.nan), row.get("1H Red-3 Above Low %", np.nan)]
+    return any(all(pd.notna(v) and float(v) <= threshold for v in values) for threshold in thresholds)
 
 def identify_long_green_candle(row):
     candle_range = float(row["High"] - row["Low"])
@@ -406,13 +475,15 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
         signal = find_signal(intraday)
         if not signal:
             return None
+        hourly = get_1h_data(symbol)
+        h1 = analyze_1h_perspective(hourly)
         return {
             "Symbol": symbol.replace(".NS", ""), "_Green Color": green_color,
             "Current Price": current_price, "Previous Close": previous_close,
             "Day-1 O2L%": float(previous_three["O2L%"].iloc[-1]), "Day-2 O2L%": float(previous_three["O2L%"].iloc[-2]), "Day-3 O2L%": float(previous_three["O2L%"].iloc[-3]),
             "Signal Time": signal["Signal Time"], "Signal Price": signal["Signal Price"], "Kijun": signal["Kijun"],
             "ADX": signal["ADX"], "+DI": signal["Plus_DI"], "-DI": signal["Minus_DI"],
-            "Green Body %": signal["Green Body %"], "Alligator": "Bullish"
+            "Green Body %": signal["Green Body %"], "Alligator": "Bullish", **h1
         }, signal
     except Exception:
         return None
