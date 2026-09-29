@@ -151,14 +151,15 @@ def fill_green_info(cell):
         fg = fill.fgColor
         label = color_to_label(fg)
         if fg.type == "rgb" and fg.rgb and is_green_value("#" + fg.rgb[-6:]):
-            return True, label
+            return True, label, "#" + fg.rgb[-6:].upper()
         if fg.type == "indexed" and fg.indexed is not None and fg.indexed in {3,4,35,36,43,44,50,51}:
-            return True, label
+            indexed_hex = {3:"#00FF00", 4:"#00FFFF", 35:"#99CC00", 36:"#CCFF00", 43:"#00FF00", 44:"#33CCCC", 50:"#00CC99", 51:"#99FF99"}.get(fg.indexed, "#00FF00")
+            return True, label, indexed_hex
         if fg.type == "theme" and getattr(fg, "rgb", None) and is_green_value("#" + fg.rgb[-6:]):
-            return True, label
+            return True, label, "#" + fg.rgb[-6:].upper()
     if is_green_value(cell.value):
-        return True, str(cell.value).strip()
-    return False, ""
+        return True, str(cell.value).strip(), "#00B050"
+    return False, "", ""
 
 def extract_green_stocks_from_excel(uploaded_bytes, filename):
     try:
@@ -175,9 +176,9 @@ def extract_green_stocks_from_excel(uploaded_bytes, filename):
             if not symbol:
                 continue
             for c in range(1, ws.max_column + 1):
-                green, shade = fill_green_info(ws.cell(r, c))
+                green, shade, color_hex = fill_green_info(ws.cell(r, c))
                 if green:
-                    records.append({"Symbol": symbol, "Green Shade": shade or "Green"})
+                    records.append({"Symbol": symbol, "Green Shade": shade or "Green", "Green Color": color_hex or "#00B050"})
                     break
         return records
     except Exception:
@@ -199,7 +200,9 @@ def load_saved_universe():
             return []
         if "Green Shade" not in df.columns:
             df["Green Shade"] = "Green"
-        return df[["Symbol", "Green Shade"]].fillna("").to_dict("records")
+        if "Green Color" not in df.columns:
+            df["Green Color"] = "#00B050"
+        return df[["Symbol", "Green Shade", "Green Color"]].fillna("").to_dict("records")
     except Exception:
         return []
 
@@ -231,7 +234,7 @@ with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_uni
                     import io
                     df_upload = pd.read_excel(io.BytesIO(raw_bytes))
                     symbols = extract_green_stocks(df_upload)
-                    records = [{"Symbol": s, "Green Shade": "Green"} for s in symbols]
+                    records = [{"Symbol": s, "Green Shade": "Green", "Green Color": "#00B050"} for s in symbols]
             else:
                 import io
                 df_upload = pd.read_csv(io.BytesIO(raw_bytes))
@@ -252,7 +255,11 @@ meta = load_meta()
 
 if saved_universe:
     st.success(f"ACTIVE UNIVERSE: {len(saved_universe)} green stocks | File: {meta.get('filename','saved file')} | Next upload will replace this list.")
-    st.dataframe(pd.DataFrame({"Green Stocks": [r["Symbol"].replace(".NS","") for r in saved_universe], "Uploaded Green Shade": [r.get("Green Shade","Green") for r in saved_universe]}), use_container_width=True, hide_index=True)
+    universe_df = pd.DataFrame({"Green Stocks": [r["Symbol"].replace(".NS","") for r in saved_universe], "Uploaded Green Shade": [r.get("Green Shade","Green") for r in saved_universe], "Green Color": [r.get("Green Color","#00B050") for r in saved_universe]})
+    def color_rows(row):
+        color = str(row["Green Color"])
+        return [f"background-color: {color}; font-weight: 700" if col in ["Green Stocks", "Uploaded Green Shade", "Green Color"] else "" for col in universe_df.columns]
+    st.dataframe(universe_df.style.apply(color_rows, axis=1), use_container_width=True, hide_index=True)
 else:
     st.warning("No stock file is saved yet. Upload your file to create the green-stock scanning universe.")
 
@@ -362,7 +369,7 @@ def find_signal(intraday):
             }
     return None
 
-def scan_stock(symbol, green_shade="Green"):
+def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
     try:
         daily = calculate_o2l(get_daily_data(symbol))
         if daily.empty or len(daily) < 5:
@@ -383,6 +390,7 @@ def scan_stock(symbol, green_shade="Green"):
         return {
             "Symbol": symbol.replace(".NS", ""),
             "Green Shade": green_shade,
+            "Green Color": green_color,
             "Current Price": current_price,
             "Previous Close": previous_close,
             "Day-1 O2L%": float(previous_three["O2L%"].iloc[-1]),
@@ -408,7 +416,7 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
         total = len(saved_symbols)
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(scan_stock, r["Symbol"], r.get("Green Shade","Green")): r for r in saved_universe}
+            futures = {executor.submit(scan_stock, r["Symbol"], r.get("Green Shade","Green"), r.get("Green Color","#00B050")): r for r in saved_universe}
             for i, future in enumerate(as_completed(futures), 1):
                 record = futures[future]
                 symbol = record["Symbol"]
@@ -428,7 +436,10 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
         if results:
             result_df = pd.DataFrame(results).sort_values(["Signal Time", "Green Body %"], ascending=[False, False])
             st.subheader(f"BUY Candidates ({len(result_df)})")
-            st.dataframe(result_df, use_container_width=True, hide_index=True)
+            def color_result_rows(row):
+                color = str(row.get("Green Color", "#00B050"))
+                return [f"background-color: {color}; font-weight: 700" if col in ["Symbol", "Green Shade", "Green Color"] else "" for col in result_df.columns]
+            st.dataframe(result_df.style.apply(color_result_rows, axis=1), use_container_width=True, hide_index=True)
             st.download_button("⬇️ Download CSV", result_df.to_csv(index=False).encode("utf-8"), "buy_scan_results.csv", "text/csv")
             for symbol, signal in details:
                 with st.expander(f"🟢 {symbol} — {signal['Signal Time']}"):
