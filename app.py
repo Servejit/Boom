@@ -490,6 +490,124 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
 
 st.info("Only the saved green-shade stock universe is scanned. The saved file/list is retained until a new upload replaces it.")
 
+def selected_1h_thresholds():
+    out = []
+    if h1_025: out.append(0.25)
+    if h1_050: out.append(0.50)
+    if h1_075: out.append(0.75)
+    if h1_100: out.append(1.00)
+    return out
+
+def passes_1h_perspective(row):
+    if not perspective_1h_on:
+        return True
+    if not bool(row.get("1H Perspective Ready", False)):
+        return False
+    thresholds = selected_1h_thresholds()
+    if not thresholds:
+        return False
+    values = [
+        row.get("1H Red-1 Above Low %", np.nan),
+        row.get("1H Red-2 Above Low %", np.nan),
+        row.get("1H Red-3 Above Low %", np.nan),
+    ]
+    return any(
+        all(pd.notna(v) and float(v) <= threshold for v in values)
+        for threshold in thresholds
+    )
+
+def render_scan_results(result_df, details):
+    if result_df.empty:
+        st.warning("No saved green stocks matched the active filters.")
+        return
+
+    result_df = result_df.sort_values(
+        ["Signal Time", "Green Body %"], ascending=[False, False]
+    )
+    st.subheader(f"BUY Candidates ({len(result_df)})")
+    display_df = result_df.drop(
+        columns=["_Green Color", "1H Perspective Ready"], errors="ignore"
+    ).copy()
+
+    for col in [
+        "Current Price", "Previous Close", "Signal Price", "Kijun",
+        "ADX", "+DI", "-DI", "Backtest Return %",
+        "1H Red-1 Above Low %", "1H Red-2 Above Low %",
+        "1H Red-3 Above Low %"
+    ]:
+        if col in display_df.columns:
+            display_df[col] = pd.to_numeric(
+                display_df[col], errors="coerce"
+            ).map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
+
+    result_color_map = {
+        str(row["Symbol"]): str(
+            row.get("_Green Color", "#00B050") or "#00B050"
+        )
+        for _, row in result_df.iterrows()
+    }
+
+    def color_result_rows(row):
+        symbol = str(row["Symbol"])
+        color = result_color_map.get(symbol, "#00B050")
+        return [
+            f"background-color: {color}; font-weight: 700"
+            if col == "Symbol" else ""
+            for col in display_df.columns
+        ]
+
+    st.dataframe(
+        display_df.style.apply(color_result_rows, axis=1),
+        use_container_width=True,
+        hide_index=True
+    )
+    st.download_button(
+        "⬇️ Download CSV",
+        display_df.to_csv(index=False).encode("utf-8"),
+        "buy_scan_results.csv",
+        "text/csv",
+        key="download_scan_results"
+    )
+
+    bt = result_df[
+        result_df["Backtest Outcome"].isin(
+            ["Target", "Stop", "Neither", "Ambiguous"]
+        )
+    ].copy()
+    if not bt.empty:
+        st.subheader("📊 Current Scan Backtest Check")
+        target_count = int((bt["Backtest Outcome"] == "Target").sum())
+        stop_count = int((bt["Backtest Outcome"] == "Stop").sum())
+        evaluated = target_count + stop_count
+        win_rate = (target_count / evaluated * 100) if evaluated else np.nan
+        x1, x2, x3 = st.columns(3)
+        x1.metric("Target Hits", target_count)
+        x2.metric("Stop Hits", stop_count)
+        x3.metric(
+            "Win Rate",
+            f"{win_rate:.2f}%" if pd.notna(win_rate) else "N/A"
+        )
+        st.caption(
+            f"Outcome test uses target {bt_target:.2f}%, stop {bt_stop:.2f}%, "
+            f"and the next {int(bt_bars)} completed 3-minute candles. "
+            "This is a forward check of the signals found in the current scan, "
+            "not a full historical backtest."
+        )
+
+    for symbol, signal, outcome, outcome_pct in details:
+        with st.expander(f"🟢 {symbol} — {signal['Signal Time']}"):
+            a, b, c, d = st.columns(4)
+            a.metric("Signal Price", f"{signal['Signal Price']:.2f}")
+            b.metric("Kijun", f"{signal['Kijun']:.2f}")
+            c.metric("ADX", f"{signal['ADX']:.2f}")
+            d.metric("Backtest", outcome)
+            st.write({
+                k: round(v, 2)
+                if isinstance(v, (int, float, np.floating)) else v
+                for k, v in signal.items()
+                if not k.startswith("_")
+            })
+
 if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
     if not scan_on:
         st.info("Scanner is OFF. Turn Scanner ON from the sidebar to run it.")
@@ -500,60 +618,81 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
         results, details = [], []
         progress, status = st.progress(0), st.empty()
         total = len(saved_symbols)
+
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(scan_stock, r["Symbol"], r.get("Green Shade", "Green"), r.get("Green Color", "#00B050")): r for r in saved_universe}
+            futures = {
+                executor.submit(
+                    scan_stock,
+                    r["Symbol"],
+                    r.get("Green Shade", "Green"),
+                    r.get("Green Color", "#00B050")
+                ): r
+                for r in saved_universe
+            }
             for i, future in enumerate(as_completed(futures), 1):
                 record = futures[future]
-                status.write(f"Scanning green stock {record['Symbol'].replace('.NS', '')} — {i}/{total}")
+                status.write(
+                    f"Scanning green stock "
+                    f"{record['Symbol'].replace('.NS', '')} — {i}/{total}"
+                )
                 try:
                     result = future.result()
                     if result:
                         row, signal = result
-                        outcome, outcome_pct = evaluate_signal_outcome(get_intraday_data(record["Symbol"]), signal) if show_backtest else ("Not Run", np.nan)
+                        outcome, outcome_pct = (
+                            evaluate_signal_outcome(
+                                get_intraday_data(record["Symbol"]), signal
+                            )
+                            if show_backtest else ("Not Run", np.nan)
+                        )
                         row["Backtest Outcome"] = outcome
                         row["Backtest Return %"] = outcome_pct
                         results.append(row)
-                        details.append((row["Symbol"], signal, outcome, outcome_pct))
+                        details.append(
+                            (row["Symbol"], signal, outcome, outcome_pct)
+                        )
                 except Exception:
                     pass
                 progress.progress(i / total)
-        status.success(f"Scan complete. Scanned only {total} saved green-shade stocks. {len(results)} BUY candidate(s) found.")
-        if results:
-            result_df = pd.DataFrame(results).sort_values(["Signal Time", "Green Body %"], ascending=[False, False])
-            st.subheader(f"BUY Candidates ({len(result_df)})")
-            display_df = result_df.drop(columns=["_Green Color"], errors="ignore").copy()
-            for col in ["Current Price", "Previous Close", "Signal Price", "Kijun", "ADX", "+DI", "-DI", "Backtest Return %"]:
-                if col in display_df.columns:
-                    display_df[col] = pd.to_numeric(display_df[col], errors="coerce").map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
-            result_color_map = {str(row["Symbol"]): str(row.get("_Green Color", "#00B050") or "#00B050") for _, row in result_df.iterrows()}
-            def color_result_rows(row):
-                symbol = str(row["Symbol"])
-                color = result_color_map.get(symbol, "#00B050")
-                return [f"background-color: {color}; font-weight: 700" if col == "Symbol" else "" for col in display_df.columns]
-            st.dataframe(display_df.style.apply(color_result_rows, axis=1), use_container_width=True, hide_index=True)
-            st.download_button("⬇️ Download CSV", display_df.to_csv(index=False).encode("utf-8"), "buy_scan_results.csv", "text/csv")
-            bt = result_df[result_df["Backtest Outcome"].isin(["Target", "Stop", "Neither", "Ambiguous"])].copy()
-            if not bt.empty:
-                st.subheader("📊 Current Scan Backtest Check")
-                target_count = int((bt["Backtest Outcome"] == "Target").sum())
-                stop_count = int((bt["Backtest Outcome"] == "Stop").sum())
-                evaluated = target_count + stop_count
-                win_rate = (target_count / evaluated * 100) if evaluated else np.nan
-                x1, x2, x3 = st.columns(3)
-                x1.metric("Target Hits", target_count)
-                x2.metric("Stop Hits", stop_count)
-                x3.metric("Win Rate", f"{win_rate:.2f}%" if pd.notna(win_rate) else "N/A")
-                st.caption(f"Outcome test uses target {bt_target:.2f}%, stop {bt_stop:.2f}%, and the next {int(bt_bars)} completed 3-minute candles. This is a forward check of the signals found in the current scan, not a full historical backtest.")
-            for symbol, signal, outcome, outcome_pct in details:
-                with st.expander(f"🟢 {symbol} — {signal['Signal Time']}"):
-                    a, b, c, d = st.columns(4)
-                    a.metric("Signal Price", f"{signal['Signal Price']:.2f}")
-                    b.metric("Kijun", f"{signal['Kijun']:.2f}")
-                    c.metric("ADX", f"{signal['ADX']:.2f}")
-                    d.metric("Backtest", outcome)
-                    st.write({k: round(v, 2) if isinstance(v, (int, float, np.floating)) else v for k, v in signal.items() if not k.startswith("_")})
+
+        st.session_state["boom_scan_results"] = pd.DataFrame(results)
+        st.session_state["boom_scan_details"] = details
+        st.session_state["boom_scan_completed"] = True
+        status.success(
+            f"Scan complete. Scanned only {total} saved green-shade stocks. "
+            f"{len(results)} BUY candidate(s) found. All 1H details were "
+            "collected during this scan."
+        )
+
+if st.session_state.get("boom_scan_completed", False):
+    all_results = st.session_state.get(
+        "boom_scan_results", pd.DataFrame()
+    ).copy()
+    all_details = st.session_state.get("boom_scan_details", [])
+
+    if not all_results.empty:
+        if perspective_1h_on:
+            filtered = all_results[
+                all_results.apply(passes_1h_perspective, axis=1)
+            ].copy()
+            allowed_symbols = set(filtered["Symbol"].astype(str))
+            filtered_details = [
+                d for d in all_details if str(d[0]) in allowed_symbols
+            ]
+            selected = selected_1h_thresholds()
+            threshold_text = (
+                ", ".join(f"{x:.2f}%" for x in selected)
+                if selected else "none"
+            )
+            st.info(
+                f"1H Perspective is ON: showing {len(filtered)} of "
+                f"{len(all_results)} scanned BUY candidates. Selected "
+                f"threshold(s): {threshold_text}. Change the checkboxes "
+                "without running the scanner again."
+            )
+            render_scan_results(filtered, filtered_details)
         else:
-            st.warning("No saved green stocks matched all BUY conditions.")
+            render_scan_results(all_results, all_details)
 
 with st.expander("📐 Formulas / Definitions"):
     st.code("""O2L% = ((Low - Open) / Open) * 100
