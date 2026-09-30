@@ -346,11 +346,29 @@ def get_1h_data(symbol):
         x = x.dropna(subset=["Open", "High", "Low", "Close"]).copy()
 
         def aggregate(frame, rule):
-            return frame.resample(rule, origin="start_day", label="left", closed="left").agg({
-                "Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"
+            # NSE intraday candles are anchored to the 09:15 session open,
+            # not to midnight. This keeps 30M/45M/1H candles aligned with
+            # the candles normally shown on trading charts.
+            return frame.resample(
+                rule,
+                origin="start_day",
+                offset="15min",
+                label="left",
+                closed="left"
+            ).agg({
+                "Open": "first",
+                "High": "max",
+                "Low": "min",
+                "Close": "last",
+                "Volume": "sum"
             }).dropna(subset=["Open", "High", "Low", "Close"])
 
-        return {"15M": x, "30M": aggregate(x, "30min"), "45M": aggregate(x, "45min"), "1H": aggregate(x, "1h")}
+        return {
+            "15M": x,
+            "30M": aggregate(x, "30min"),
+            "45M": aggregate(x, "45min"),
+            "1H": aggregate(x, "1h")
+        }
     except Exception:
         return {}
 
