@@ -540,27 +540,46 @@ def passes_1h_perspective(row):
     )
 
 def make_chart_thumbnail(intraday, signal):
-    """Create a compact 3-minute chart thumbnail for a matching stock."""
+    """Create a compact true 3-minute OHLC candlestick thumbnail with indicators."""
     try:
         df = calculate_adx(calculate_ichimoku(calculate_alligator(intraday.copy())))
         pos = int(signal.get("_signal_pos", len(df) - 1))
         chart = df.iloc[max(0, pos - 45):pos + 1].copy()
         if chart.empty:
             return None
-        fig, ax = plt.subplots(figsize=(5.8, 2.7), dpi=120)
-        ax.plot(chart.index, chart["Close"], linewidth=1.7, label="Close")
-        ax.plot(chart.index, chart["Kijun"], linewidth=1.0, label="Kijun")
-        ax.plot(chart.index, chart["Jaw"], linewidth=0.8, label="Jaw")
-        ax.plot(chart.index, chart["Teeth"], linewidth=0.8, label="Teeth")
-        ax.plot(chart.index, chart["Lips"], linewidth=0.8, label="Lips")
-        if signal.get("Signal Time") is not None and pd.notna(signal.get("Signal Price")):
-            ax.scatter([signal["Signal Time"]], [signal["Signal Price"]], s=34, marker="^", zorder=5, label="BUY")
-        ax.set_title("3M Signal Chart", fontsize=9)
-        ax.grid(True, alpha=0.22)
+
+        fig, ax = plt.subplots(figsize=(5.8, 3.1), dpi=120)
+        x = np.arange(len(chart), dtype=float)
+        price_span = max(float(chart["High"].max() - chart["Low"].min()), 1e-9)
+        candle_width = 0.62
+        for i, (_, bar) in enumerate(chart.iterrows()):
+            o, h, l, cl = map(float, [bar["Open"], bar["High"], bar["Low"], bar["Close"]])
+            is_green = cl >= o
+            body_low = min(o, cl)
+            body_height = max(abs(cl - o), price_span * 0.002)
+            # Green/red candlestick bodies and wicks.
+            candle_color = "green" if is_green else "red"
+            ax.vlines(i, l, h, linewidth=0.75, color=candle_color, zorder=2)
+            rect = plt.Rectangle((i - candle_width / 2, body_low), candle_width, body_height,
+                                 facecolor=candle_color, edgecolor=candle_color, linewidth=0.5, zorder=3)
+            ax.add_patch(rect)
+
+        ax.plot(x, chart["Kijun"].to_numpy(dtype=float), linewidth=1.0, label="Kijun")
+        ax.plot(x, chart["Jaw"].to_numpy(dtype=float), linewidth=0.75, label="Jaw")
+        ax.plot(x, chart["Teeth"].to_numpy(dtype=float), linewidth=0.75, label="Teeth")
+        ax.plot(x, chart["Lips"].to_numpy(dtype=float), linewidth=0.75, label="Lips")
+
+        signal_x = len(chart) - 1
+        ax.scatter([signal_x], [float(signal["Signal Price"])], s=38, marker="^", zorder=5, label="BUY")
+        ax.set_title("3M Candlestick Signal", fontsize=9)
+        ax.set_xlim(-1, len(chart))
+        ax.grid(True, alpha=0.18, axis="y")
         ax.tick_params(axis="both", labelsize=7)
-        ax.tick_params(axis="x", rotation=25)
-        ax.legend(loc="upper left", fontsize=6, ncol=3, frameon=False)
-        fig.tight_layout(pad=0.8)
+        tick_idx = np.linspace(0, len(chart) - 1, min(6, len(chart)), dtype=int)
+        ax.set_xticks(tick_idx)
+        ax.set_xticklabels([chart.index[i].strftime("%H:%M") for i in tick_idx], rotation=25, fontsize=6)
+        ax.legend(loc="upper left", fontsize=5.5, ncol=5, frameon=False)
+        fig.tight_layout(pad=0.6)
         buf = io.BytesIO()
         fig.savefig(buf, format="png", bbox_inches="tight")
         plt.close(fig)
@@ -591,7 +610,7 @@ def render_sidebar_matching_thumbnails(result_df):
                 st.markdown(f"<div style='border-left:6px solid {color};padding:8px;border-radius:6px;background:rgba(0,176,80,.08)'><b>{symbol}</b><br>Signal: {price_text}</div>", unsafe_allow_html=True)
                 if chart_bytes:
                     st.image(chart_bytes, use_container_width=True)
-                st.caption("Mini chart: recent 3-minute price action with Kijun and Alligator lines. ▲ marks the detected BUY signal.")
+                st.caption("Mini chart: true 3-minute OHLC candlesticks with Kijun and Alligator lines. ▲ marks the detected BUY signal.")
                 for label, value in [
                     ("Alligator", "✓ Bullish"),
                     ("Kijun", "✓ Cross + Close above"),
