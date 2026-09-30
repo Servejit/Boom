@@ -658,7 +658,7 @@ def render_scan_results(result_df, details):
                 display_df[col], errors="coerce"
             ).map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
 
-    result_color_map = {
+    desired_order = [\n        "Symbol", "Current Price", "Previous Close", "Day-1 O2L%", "Day-2 O2L%", "Day-3 O2L%",\n        "Signal Time", "Signal Price", "Kijun", "ADX", "+DI", "-DI", "Backtest Outcome", "Backtest Return %",\n        "Green Body %", "Alligator", "1H Current", "1H Red-1", "1H Red-2", "1H Red-3",\n        "1H Red-1 Above Low %", "1H Red-2 Above Low %", "1H Red-3 Above Low %"\n    ]\n    ordered = [c for c in desired_order if c in display_df.columns]\n    remaining = [c for c in display_df.columns if c not in ordered]\n    display_df = display_df[ordered + remaining]\n\n    result_color_map = {
         str(row["Symbol"]): str(
             row.get("_Green Color", "#00B050") or "#00B050"
         )
