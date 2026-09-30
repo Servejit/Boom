@@ -610,7 +610,15 @@ def render_sidebar_matching_thumbnails(result_df):
                 st.markdown(f"<div style='border-left:6px solid {color};padding:8px;border-radius:6px;background:rgba(0,176,80,.08)'><b>{symbol}</b><br>Signal: {price_text}</div>", unsafe_allow_html=True)
                 if chart_bytes:
                     st.image(chart_bytes, use_container_width=True)
-                st.caption("Mini chart: true 3-minute OHLC candlesticks with Kijun and Alligator lines. ▲ marks the detected BUY signal.")
+                    z1, z2 = st.columns(2)
+                    with z1:
+                        with st.popover("🔍 Zoom", use_container_width=True):
+                            st.image(chart_bytes, caption=f"{symbol} — 3-minute candlestick chart", use_container_width=True)
+                    with z2:
+                        tradingview_symbol = symbol.replace(".NS", "").upper()
+                        tradingview_url = f"https://www.tradingview.com/chart/?symbol=NSE%3A{tradingview_symbol}"
+                        st.link_button("📊 TradingView", tradingview_url, use_container_width=True)
+                st.caption("Mini chart: true 3-minute OHLC candlesticks with Kijun and Alligator lines. Use Zoom for a larger view or TradingView for the full interactive chart.")
                 for label, value in [
                     ("Alligator", "✓ Bullish"),
                     ("Kijun", "✓ Cross + Close above"),
