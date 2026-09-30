@@ -7,6 +7,8 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import io
+import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="3-Minute Bullish BUY Scanner", page_icon="📈", layout="wide")
 
@@ -537,6 +539,39 @@ def passes_1h_perspective(row):
         for threshold in thresholds
     )
 
+def make_chart_thumbnail(intraday, signal):
+    """Create a compact 3-minute chart thumbnail for a matching stock."""
+    try:
+        df = calculate_adx(calculate_ichimoku(calculate_alligator(intraday.copy())))
+        pos = int(signal.get("_signal_pos", len(df) - 1))
+        chart = df.iloc[max(0, pos - 45):pos + 1].copy()
+        if chart.empty:
+            return None
+        fig, ax = plt.subplots(figsize=(5.8, 2.7), dpi=120)
+        ax.plot(chart.index, chart["Close"], linewidth=1.7, label="Close")
+        ax.plot(chart.index, chart["Kijun"], linewidth=1.0, label="Kijun")
+        ax.plot(chart.index, chart["Jaw"], linewidth=0.8, label="Jaw")
+        ax.plot(chart.index, chart["Teeth"], linewidth=0.8, label="Teeth")
+        ax.plot(chart.index, chart["Lips"], linewidth=0.8, label="Lips")
+        if signal.get("Signal Time") is not None and pd.notna(signal.get("Signal Price")):
+            ax.scatter([signal["Signal Time"]], [signal["Signal Price"]], s=34, marker="^", zorder=5, label="BUY")
+        ax.set_title("3M Signal Chart", fontsize=9)
+        ax.grid(True, alpha=0.22)
+        ax.tick_params(axis="both", labelsize=7)
+        ax.tick_params(axis="x", rotation=25)
+        ax.legend(loc="upper left", fontsize=6, ncol=3, frameon=False)
+        fig.tight_layout(pad=0.8)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        plt.close(fig)
+        return buf.getvalue()
+    except Exception:
+        try:
+            plt.close("all")
+        except Exception:
+            pass
+        return None
+
 def render_sidebar_matching_thumbnails(result_df):
     with st.sidebar:
         st.markdown("---")
@@ -550,15 +585,20 @@ def render_sidebar_matching_thumbnails(result_df):
             signal_price = pd.to_numeric(row.get("Signal Price", np.nan), errors="coerce")
             adx = pd.to_numeric(row.get("ADX", np.nan), errors="coerce")
             body = pd.to_numeric(row.get("Green Body %", np.nan), errors="coerce")
+            chart_bytes = row.get("_Chart Thumbnail")
             with st.expander(f"🟢 {symbol}", expanded=False):
                 price_text = f"₹{signal_price:.2f}" if pd.notna(signal_price) else "N/A"
-                adx_text = f"{adx:.2f}" if pd.notna(adx) else "N/A"
-                body_text = f"{body:.2f}%" if pd.notna(body) else "N/A"
                 st.markdown(f"<div style='border-left:6px solid {color};padding:8px;border-radius:6px;background:rgba(0,176,80,.08)'><b>{symbol}</b><br>Signal: {price_text}</div>", unsafe_allow_html=True)
+                if chart_bytes:
+                    st.image(chart_bytes, use_container_width=True)
+                st.caption("Mini chart: recent 3-minute price action with Kijun and Alligator lines. ▲ marks the detected BUY signal.")
                 for label, value in [
-                    ("Alligator", "✓ Bullish"), ("Kijun", "✓ Cross + Close above"),
-                    ("Green Candle", f"✓ {body_text}"), ("ADX", f"✓ {adx_text}"),
-                    ("+DI > -DI", "✓"), ("3-Day O2L", "✓ All < -1%"),
+                    ("Alligator", "✓ Bullish"),
+                    ("Kijun", "✓ Cross + Close above"),
+                    ("Green Candle", f"✓ {body:.2f}% body" if pd.notna(body) else "✓"),
+                    ("ADX", f"✓ {adx:.2f}" if pd.notna(adx) else "✓"),
+                    ("+DI > -DI", "✓"),
+                    ("3-Day O2L", "✓ All < -1%"),
                     ("Price > Prev Close", "✓"),
                     ("1H Current", f"✓ {row.get('1H Current','N/A')}"),
                     ("1H Red-1", f"✓ {row.get('1H Red-1','N/A')}"),
@@ -577,7 +617,7 @@ def render_scan_results(result_df, details):
     )
     st.subheader(f"BUY Candidates ({len(result_df)})")
     display_df = result_df.drop(
-        columns=["_Green Color", "1H Perspective Ready"], errors="ignore"
+        columns=["_Green Color", "_Chart Thumbnail", "1H Perspective Ready"], errors="ignore"
     ).copy()
 
     for col in [
@@ -698,6 +738,7 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
                         )
                         row["Backtest Outcome"] = outcome
                         row["Backtest Return %"] = outcome_pct
+                        row["_Chart Thumbnail"] = make_chart_thumbnail(get_intraday_data(record["Symbol"]), signal)
                         results.append(row)
                         details.append(
                             (row["Symbol"], signal, outcome, outcome_pct)
