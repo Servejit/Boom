@@ -458,7 +458,8 @@ def evaluate_signal_outcome(intraday, signal):
     try:
         pos = int(signal["_signal_pos"])
         entry = float(signal["Signal Price"])
-        future = intraday.iloc[pos + 1:pos + 1 + int(bt_bars)]
+        # _signal_pos is based on the same 3-minute dataframe used by find_signal.
+        future = intraday.iloc[pos + 1:pos + 1 + int(bt_bars)].copy()
         if future.empty:
             return "No future data", np.nan
         target = entry * (1 + float(bt_target) / 100)
@@ -498,6 +499,9 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
         hourly = get_1h_data(symbol)
         h1 = analyze_1h_perspective(hourly)
         outcome, outcome_pct = evaluate_signal_outcome(intraday, signal) if show_backtest else ("Not Run", np.nan)
+        if show_backtest and outcome == "Unknown":
+            outcome = "Neither" if len(intraday) > int(signal["_signal_pos"]) + 1 else "No future data"
+            outcome_pct = 0.0 if outcome == "Neither" else np.nan
         return {
             "Symbol": symbol.replace(".NS", ""), "_Green Color": green_color,
             "Current Price": current_price, "Previous Close": previous_close,
