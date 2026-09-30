@@ -384,6 +384,7 @@ def analyze_multi_timeframe_perspective(data):
     return result
 
 def timeframe_perspective_passes(row, tf):
+    # Perspective filter requires the current candle to be Green.
     current = str(row.get(f"{tf} Current", ""))
     pattern = str(row.get(f"{tf} Red Pattern", ""))
     if current != "Green":
@@ -775,10 +776,10 @@ if st.session_state.get("boom_scan_completed", False):
         filtered = all_results.copy()
         active_filters = []
         if perspective_45m_on:
-            filtered = filtered[filtered.apply(lambda row: timeframe_perspective_passes(row, "45M"), axis=1)].copy()
+            filtered = filtered[filtered.apply(lambda row: timeframe_perspective_passes(row, "1H") and timeframe_perspective_passes(row, "45M"), axis=1)].copy()
             active_filters.append("45M")
         if perspective_30m_on:
-            filtered = filtered[filtered.apply(lambda row: timeframe_perspective_passes(row, "30M"), axis=1)].copy()
+            filtered = filtered[filtered.apply(lambda row: timeframe_perspective_passes(row, "1H") and timeframe_perspective_passes(row, "30M"), axis=1)].copy()
             active_filters.append("30M")
         if active_filters:
             st.info(f"Timeframe Perspective ON: {', '.join(active_filters)}. Showing {len(filtered)} of {len(all_results)} candidates. Change the switches without running the scanner again.")
