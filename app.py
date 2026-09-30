@@ -662,7 +662,7 @@ def render_scan_results(result_df, details):
     desired_order = [
         "Symbol", "Current Price", "Previous Close", "Day-1 O2L%", "Day-2 O2L%", "Day-3 O2L%",
         "Signal Time", "Signal Price", "Kijun", "ADX", "+DI", "-DI", "Backtest Outcome", "Backtest Return %",
-        "Green Body %", "Alligator", "1H Current", "1H Red-1", "1H Red-2", "1H Red-3"
+        "Green Body %", "Alligator", "1H Current"
     ]
     ordered = [c for c in desired_order if c in display_df.columns]
     remaining = [c for c in display_df.columns if c not in ordered]
