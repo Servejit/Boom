@@ -365,21 +365,19 @@ def analyze_multi_timeframe_perspective(data):
         cur = frame.iloc[-1]
         current_green = float(cur["Close"]) > float(cur["Open"])
         result[f"{tf} Current"] = "Green" if current_green else "Red"
+
+        # Count every continuous red candle immediately before the
+        # current green candle. There is no 3/5/6 candle limit.
         red_count = 0
-        for i in range(2, min(len(frame), 4)):
+        for i in range(2, len(frame) + 1):
             candle = frame.iloc[-i]
             if float(candle["Close"]) < float(candle["Open"]):
                 red_count += 1
             else:
                 break
-        if current_green and red_count >= 3:
-            result[f"{tf} Red Pattern"] = "3 Red"
-        elif current_green and red_count == 2:
-            result[f"{tf} Red Pattern"] = "2 Red"
-        elif current_green and red_count == 1:
-            result[f"{tf} Red Pattern"] = "1 Red"
-        elif current_green:
-            result[f"{tf} Red Pattern"] = "0 Red"
+
+        if current_green:
+            result[f"{tf} Red Pattern"] = f"{red_count} Red"
         else:
             result[f"{tf} Red Pattern"] = "Current Not Green"
     return result
