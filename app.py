@@ -380,12 +380,15 @@ def analyze_multi_timeframe_perspective(data):
         result[f"{tf} Red Pattern"] = "N/A"
         if frame is None or frame.empty:
             continue
+        # The final row is intentionally treated as the LIVE / FORMING
+        # candle. Its OHLC values may change until that timeframe closes.
         cur = frame.iloc[-1]
         current_green = float(cur["Close"]) > float(cur["Open"])
         result[f"{tf} Current"] = "Green" if current_green else "Red"
 
-        # Count every continuous red candle immediately before the
-        # current green candle. There is no 3/5/6 candle limit.
+        # Red-1 is the immediately preceding COMPLETED candle.
+        # Continue backward through every consecutive completed red candle
+        # until the first non-red candle. There is no artificial limit.
         red_count = 0
         for i in range(2, len(frame) + 1):
             candle = frame.iloc[-i]
