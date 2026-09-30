@@ -644,7 +644,7 @@ def render_scan_results(result_df, details):
     )
     st.subheader(f"BUY Candidates ({len(result_df)})")
     display_df = result_df.drop(
-        columns=["_Green Color", "_Chart Thumbnail", "1H Perspective Ready"], errors="ignore"
+        columns=["_Green Color", "_Chart Thumbnail", "1H Perspective Ready", "1H Red-1", "1H Red-2", "1H Red-3", "1H Red-1 Above Low %", "1H Red-2 Above Low %", "1H Red-3 Above Low %"], errors="ignore"
     ).copy()
 
     for col in [
