@@ -355,7 +355,6 @@ def get_1h_data(symbol):
 def analyze_1h_perspective(hourly):
     empty = {
         "1H Current": "N/A", "1H Red-1": "N/A", "1H Red-2": "N/A", "1H Red-3": "N/A",
-        "1H Red-1 Above Low %": np.nan, "1H Red-2 Above Low %": np.nan, "1H Red-3 Above Low %": np.nan,
         "1H Perspective Ready": False,
     }
     if hourly is None or hourly.empty or len(hourly) < 4:
@@ -394,9 +393,6 @@ def analyze_1h_perspective(hourly):
         "1H Red-1": "Red" if red_flags[0] else "Green",
         "1H Red-2": "Red" if red_flags[1] else "Green",
         "1H Red-3": "Red" if red_flags[2] else "Green",
-        "1H Red-1 Above Low %": float(above_low[0]),
-        "1H Red-2 Above Low %": float(above_low[1]),
-        "1H Red-3 Above Low %": float(above_low[2]),
         "1H Perspective Ready": ready,
     }
 
@@ -416,7 +412,6 @@ def passes_1h_perspective(row):
     thresholds = selected_1h_thresholds()
     if not thresholds:
         return False
-    values = [row.get("1H Red-1 Above Low %", np.nan), row.get("1H Red-2 Above Low %", np.nan), row.get("1H Red-3 Above Low %", np.nan)]
     return any(all(pd.notna(v) and float(v) <= threshold for v in values) for threshold in thresholds)
 
 def identify_long_green_candle(row):
@@ -532,9 +527,6 @@ def passes_1h_perspective(row):
     if not thresholds:
         return False
     values = [
-        row.get("1H Red-1 Above Low %", np.nan),
-        row.get("1H Red-2 Above Low %", np.nan),
-        row.get("1H Red-3 Above Low %", np.nan),
     ]
     return any(
         all(pd.notna(v) and float(v) <= threshold for v in values)
