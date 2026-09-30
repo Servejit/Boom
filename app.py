@@ -500,12 +500,14 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
             return None
         hourly = get_1h_data(symbol)
         h1 = analyze_1h_perspective(hourly)
+        outcome, outcome_pct = evaluate_signal_outcome(intraday, signal) if show_backtest else ("Not Run", np.nan)
         return {
             "Symbol": symbol.replace(".NS", ""), "_Green Color": green_color,
             "Current Price": current_price, "Previous Close": previous_close,
             "Day-1 O2L%": float(previous_three["O2L%"].iloc[-1]), "Day-2 O2L%": float(previous_three["O2L%"].iloc[-2]), "Day-3 O2L%": float(previous_three["O2L%"].iloc[-3]),
             "Signal Time": signal["Signal Time"], "Signal Price": signal["Signal Price"], "Kijun": signal["Kijun"],
             "ADX": signal["ADX"], "+DI": signal["Plus_DI"], "-DI": signal["Minus_DI"],
+            "Backtest Outcome": outcome, "Backtest Return %": outcome_pct,
             "Green Body %": signal["Green Body %"], "Alligator": "Bullish", **h1
         }, signal
     except Exception:
@@ -649,9 +651,7 @@ def render_scan_results(result_df, details):
 
     for col in [
         "Current Price", "Previous Close", "Signal Price", "Kijun",
-        "ADX", "+DI", "-DI", "Backtest Outcome", "Backtest Return %",
-        "1H Red-1 Above Low %", "1H Red-2 Above Low %",
-        "1H Red-3 Above Low %"
+        "ADX", "+DI", "-DI", "Backtest Outcome", "Backtest Return %"
     ]:
         if col in display_df.columns:
             display_df[col] = pd.to_numeric(
@@ -661,8 +661,7 @@ def render_scan_results(result_df, details):
     desired_order = [
         "Symbol", "Current Price", "Previous Close", "Day-1 O2L%", "Day-2 O2L%", "Day-3 O2L%",
         "Signal Time", "Signal Price", "Kijun", "ADX", "+DI", "-DI", "Backtest Outcome", "Backtest Return %",
-        "Green Body %", "Alligator", "1H Current", "1H Red-1", "1H Red-2", "1H Red-3",
-        "1H Red-1 Above Low %", "1H Red-2 Above Low %", "1H Red-3 Above Low %"
+        "Green Body %", "Alligator", "1H Current", "1H Red-1", "1H Red-2", "1H Red-3"
     ]
     ordered = [c for c in desired_order if c in display_df.columns]
     remaining = [c for c in display_df.columns if c not in ordered]
@@ -767,14 +766,6 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
                     result = future.result()
                     if result:
                         row, signal = result
-                        outcome, outcome_pct = (
-                            evaluate_signal_outcome(
-                                get_intraday_data(record["Symbol"]), signal
-                            )
-                            if show_backtest else ("Not Run", np.nan)
-                        )
-                        row["Backtest Outcome"] = outcome
-                        row["Backtest Return %"] = outcome_pct
                         row["_Chart Thumbnail"] = make_chart_thumbnail(get_intraday_data(record["Symbol"]), signal)
                         results.append(row)
                         details.append(
