@@ -497,29 +497,6 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
 
 st.info("Only the saved green-shade stock universe is scanned. The saved file/list is retained until a new upload replaces it.")
 
-def selected_1h_thresholds():
-    out = []
-    if h1_025: out.append(0.25)
-    if h1_050: out.append(0.50)
-    if h1_075: out.append(0.75)
-    if h1_100: out.append(1.00)
-    return out
-
-def passes_1h_perspective(row):
-    if not perspective_1h_on:
-        return True
-    if not bool(row.get("1H Perspective Ready", False)):
-        return False
-    thresholds = selected_1h_thresholds()
-    if not thresholds:
-        return False
-    values = [
-    ]
-    return any(
-        all(pd.notna(v) and float(v) <= threshold for v in values)
-        for threshold in thresholds
-    )
-
 def make_chart_thumbnail(intraday, signal):
     """Create a compact true 3-minute OHLC candlestick thumbnail with indicators."""
     try:
@@ -794,7 +771,7 @@ if st.session_state.get("boom_scan_completed", False):
     _sidebar_results = st.session_state.get("boom_scan_results", pd.DataFrame()).copy()
     if not _sidebar_results.empty:
         if perspective_1h_on:
-            _sidebar_results = _sidebar_results[_sidebar_results.apply(passes_1h_perspective, axis=1)].copy()
+            _sidebar_results = _sidebar_results[_sidebar_results.apply(lambda row: timeframe_perspective_passes(row, "1H"), axis=1)].copy()
         render_sidebar_matching_thumbnails(_sidebar_results)
 
 with st.expander("📐 Formulas / Definitions"):
