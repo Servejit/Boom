@@ -652,12 +652,9 @@ def render_scan_results(result_df, details):
         "ADX", "+DI", "-DI", "Backtest Return %"
     ]:
         if col in display_df.columns:
-            if col == "Backtest Return %":
-                display_df[col] = pd.to_numeric(
-                    display_df[col], errors="coerce"
-                ).map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
-            else:
-                display_df[col] = display_df[col].astype(str).replace("nan", "")
+            display_df[col] = pd.to_numeric(
+                display_df[col], errors="coerce"
+            ).map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
 
     desired_order = [
         "Symbol", "Current Price", "Previous Close", "Day-1 O2L%", "Day-2 O2L%", "Day-3 O2L%",
