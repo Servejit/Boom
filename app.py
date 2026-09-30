@@ -211,6 +211,7 @@ with st.sidebar:
 
     scan_on = st.checkbox("🟢 Scanner ON", value=True)
     show_backtest = st.checkbox("📊 Backtest ON", value=True)
+    perspective_1h_on = st.checkbox("🕐 1H Perspective", value=False)
     perspective_45m_on = st.checkbox("🕐 45M Perspective", value=False)
     perspective_30m_on = st.checkbox("🕐 30M Perspective", value=False)
 
@@ -775,8 +776,11 @@ if st.session_state.get("boom_scan_completed", False):
     if not all_results.empty:
         filtered = all_results.copy()
         active_filters = []
+        if perspective_1h_on:
+            filtered = filtered[filtered.apply(lambda row: timeframe_perspective_passes(row, "1H"), axis=1)].copy()
+            active_filters.append("1H")
         if perspective_45m_on:
-            filtered = filtered[filtered.apply(lambda row: timeframe_perspective_passes(row, "1H") and timeframe_perspective_passes(row, "45M"), axis=1)].copy()
+            filtered = filtered[filtered.apply(lambda row: timeframe_perspective_passes(row, "45M"), axis=1)].copy()
             active_filters.append("45M")
         if perspective_30m_on:
             filtered = filtered[filtered.apply(lambda row: timeframe_perspective_passes(row, "1H") and timeframe_perspective_passes(row, "30M"), axis=1)].copy()
