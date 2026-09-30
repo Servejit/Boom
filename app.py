@@ -211,7 +211,8 @@ with st.sidebar:
 
     scan_on = st.checkbox("🟢 Scanner ON", value=True)
     show_backtest = st.checkbox("📊 Backtest ON", value=True)
-    perspective_1h_on = st.checkbox("🕐 1H Perspective", value=False)
+    perspective_45m_on = st.checkbox("🕐 45M Perspective", value=False)
+    perspective_30m_on = st.checkbox("🕐 30M Perspective", value=False)
 
     with st.expander("⚙️ Scanner Details", expanded=False):
         workers = st.slider("Parallel workers", 1, 10, 5)
@@ -242,11 +243,6 @@ with st.sidebar:
         bt_stop = st.number_input("Backtest stop %", 0.2, 5.0, 0.5, 0.1)
         bt_bars = st.number_input("Bars after signal", 1, 50, 10)
 
-        st.markdown("**1H Perspective thresholds**")
-        h1_025 = st.checkbox("0.25% above Low", value=True)
-        h1_050 = st.checkbox("0.50% above Low", value=True)
-        h1_075 = st.checkbox("0.75% above Low", value=True)
-        h1_100 = st.checkbox("1.00% above Low", value=True)
 
 # Safe defaults when the details panel is left closed.
 if "workers" not in locals():
@@ -259,8 +255,6 @@ if "adx_period" not in locals():
     adx_period, adx_min, require_adx_rising, require_plus_di = 14, 20.0, True, True
 if "bt_target" not in locals():
     bt_target, bt_stop, bt_bars = 1.0, 0.5, 10
-if "h1_025" not in locals():
-    h1_025, h1_050, h1_075, h1_100 = True, True, True, True
 
 def clean_columns(df):
     if df is None or df.empty:
@@ -339,80 +333,65 @@ def get_intraday_data(symbol):
         return pd.DataFrame()
 
 def get_1h_data(symbol):
-    """Download 1-hour candles once for this stock during a scan."""
+    """Download 15-minute data once and build 1H/45M/30M/15M perspectives."""
     try:
-        x = clean_columns(yf.download(symbol, period="60d", interval="1h", auto_adjust=False, progress=False, threads=False))
+        x = clean_columns(yf.download(symbol, period="60d", interval="15m", auto_adjust=False, progress=False, threads=False))
         if x.empty:
-            return pd.DataFrame()
+            return {}
         if not isinstance(x.index, pd.DatetimeIndex):
             x.index = pd.to_datetime(x.index)
         if getattr(x.index, "tz", None) is not None:
             x.index = x.index.tz_convert("Asia/Kolkata").tz_localize(None)
-        return x.dropna(subset=["Open", "High", "Low", "Close"]).copy()
+        x = x.dropna(subset=["Open", "High", "Low", "Close"]).copy()
+
+        def aggregate(frame, rule):
+            return frame.resample(rule, origin="start_day", label="left", closed="left").agg({
+                "Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"
+            }).dropna(subset=["Open", "High", "Low", "Close"])
+
+        return {"15M": x, "30M": aggregate(x, "30min"), "45M": aggregate(x, "45min"), "1H": aggregate(x, "1h")}
     except Exception:
-        return pd.DataFrame()
+        return {}
 
-def analyze_1h_perspective(hourly):
-    empty = {
-        "1H Current": "N/A", "1H Red-1": "N/A", "1H Red-2": "N/A", "1H Red-3": "N/A",
-        "1H Perspective Ready": False,
-    }
-    if hourly is None or hourly.empty or len(hourly) < 4:
-        return empty
+def analyze_multi_timeframe_perspective(data):
+    result = {}
+    for tf in ["1H", "45M", "30M", "15M"]:
+        frame = data.get(tf, pd.DataFrame()) if isinstance(data, dict) else pd.DataFrame()
+        result[f"{tf} Current"] = "N/A"
+        result[f"{tf} Red Pattern"] = "N/A"
+        if frame is None or frame.empty:
+            continue
+        cur = frame.iloc[-1]
+        current_green = float(cur["Close"]) > float(cur["Open"])
+        result[f"{tf} Current"] = "Green" if current_green else "Red"
+        red_count = 0
+        for i in range(2, min(len(frame), 4)):
+            candle = frame.iloc[-i]
+            if float(candle["Close"]) < float(candle["Open"]):
+                red_count += 1
+            else:
+                break
+        if current_green and red_count >= 3:
+            result[f"{tf} Red Pattern"] = "3 Red"
+        elif current_green and red_count == 2:
+            result[f"{tf} Red Pattern"] = "2 Red"
+        elif current_green and red_count == 1:
+            result[f"{tf} Red Pattern"] = "1 Red"
+        elif current_green:
+            result[f"{tf} Red Pattern"] = "0 Red"
+        else:
+            result[f"{tf} Red Pattern"] = "Current Not Green"
+    return result
 
-    # Exact sequence from newest backward:
-    # Current Green <- Red 1 <- Red 2 <- Red 3
-    # Red 1 is the candle immediately before the current 1H candle.
-    cur = hourly.iloc[-1]
-    red1 = hourly.iloc[-2]
-    red2 = hourly.iloc[-3]
-    red3 = hourly.iloc[-4]
-    prev = [red1, red2, red3]
-
-    current_green = float(cur["Close"]) > float(cur["Open"])
-    red_flags = [
-        float(red1["Close"]) < float(red1["Open"]),
-        float(red2["Close"]) < float(red2["Open"]),
-        float(red3["Close"]) < float(red3["Open"]),
-    ]
-
-    above_low = []
-    for r in prev:
-        low = float(r["Low"])
-        close = float(r["Close"])
-        above_low.append(((close - low) / low * 100.0) if low > 0 else np.nan)
-
-    ready = bool(
-        current_green
-        and all(red_flags)
-        and all(pd.notna(x) for x in above_low)
-    )
-
-    return {
-        "1H Current": "Green" if current_green else "Red",
-        "1H Red-1": "Red" if red_flags[0] else "Green",
-        "1H Red-2": "Red" if red_flags[1] else "Green",
-        "1H Red-3": "Red" if red_flags[2] else "Green",
-        "1H Perspective Ready": ready,
-    }
-
-def selected_1h_thresholds():
-    out = []
-    if h1_025: out.append(0.25)
-    if h1_050: out.append(0.50)
-    if h1_075: out.append(0.75)
-    if h1_100: out.append(1.00)
-    return out
-
-def passes_1h_perspective(row):
-    if not perspective_1h_on:
-        return True
-    if not bool(row.get("1H Perspective Ready", False)):
+def timeframe_perspective_passes(row, tf):
+    current = str(row.get(f"{tf} Current", ""))
+    pattern = str(row.get(f"{tf} Red Pattern", ""))
+    if current != "Green":
         return False
-    thresholds = selected_1h_thresholds()
-    if not thresholds:
+    try:
+        return int(pattern.split()[0]) >= 1
+    except Exception:
         return False
-    return any(all(pd.notna(v) and float(v) <= threshold for v in values) for threshold in thresholds)
 
 def identify_long_green_candle(row):
     candle_range = float(row["High"] - row["Low"])
@@ -496,8 +475,8 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
         signal = find_signal(intraday, backtest_max_pos)
         if not signal:
             return None
-        hourly = get_1h_data(symbol)
-        h1 = analyze_1h_perspective(hourly)
+        timeframe_data = get_1h_data(symbol)
+        mtf = analyze_multi_timeframe_perspective(timeframe_data)
         outcome, outcome_pct = evaluate_signal_outcome(intraday, signal) if show_backtest else ("Not Run", np.nan)
         if show_backtest and outcome == "Unknown":
             outcome = "Neither" if len(intraday) > int(signal["_signal_pos"]) + 1 else "No future data"
@@ -509,7 +488,7 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
             "Signal Time": signal["Signal Time"], "Signal Price": signal["Signal Price"], "Kijun": signal["Kijun"],
             "ADX": signal["ADX"], "+DI": signal["Plus_DI"], "-DI": signal["Minus_DI"],
             "Backtest Outcome": outcome, "Backtest Return %": outcome_pct,
-            "Green Body %": signal["Green Body %"], "Alligator": "Bullish", **h1
+            "Green Body %": signal["Green Body %"], "Alligator": "Bullish", **mtf
         }, signal
     except Exception:
         return None
@@ -628,9 +607,13 @@ def render_sidebar_matching_thumbnails(result_df):
                     ("3-Day O2L", "✓ All < -1%"),
                     ("Price > Prev Close", "✓"),
                     ("1H Current", f"✓ {row.get('1H Current','N/A')}"),
-                    ("1H Red-1", f"✓ {row.get('1H Red-1','N/A')}"),
-                    ("1H Red-2", f"✓ {row.get('1H Red-2','N/A')}"),
-                    ("1H Red-3", f"✓ {row.get('1H Red-3','N/A')}"),
+                    ("1H Red Pattern", f"✓ {row.get('1H Red Pattern','N/A')}"),
+                    ("45M Current", f"✓ {row.get('45M Current','N/A')}"),
+                    ("45M Red Pattern", f"✓ {row.get('45M Red Pattern','N/A')}"),
+                    ("30M Current", f"✓ {row.get('30M Current','N/A')}"),
+                    ("30M Red Pattern", f"✓ {row.get('30M Red Pattern','N/A')}"),
+                    ("15M Current", f"✓ {row.get('15M Current','N/A')}"),
+                    ("15M Red Pattern", f"✓ {row.get('15M Red Pattern','N/A')}"),
                 ]:
                     st.markdown(f"**{label}:** {value}")
 
@@ -659,7 +642,7 @@ def render_scan_results(result_df, details):
     desired_order = [
         "Symbol", "Current Price", "Previous Close", "Day-1 O2L%", "Day-2 O2L%", "Day-3 O2L%",
         "Signal Time", "Signal Price", "Kijun", "ADX", "+DI", "-DI", "Backtest Outcome", "Backtest Return %",
-        "Green Body %", "Alligator", "1H Current"
+        "Green Body %", "Alligator", "1H Current", "1H Red Pattern", "45M Current", "45M Red Pattern", "30M Current", "30M Red Pattern", "15M Current", "15M Red Pattern"
     ]
     ordered = [c for c in desired_order if c in display_df.columns]
     remaining = [c for c in display_df.columns if c not in ordered]
@@ -789,28 +772,17 @@ if st.session_state.get("boom_scan_completed", False):
     all_details = st.session_state.get("boom_scan_details", [])
 
     if not all_results.empty:
-        if perspective_1h_on:
-            filtered = all_results[
-                all_results.apply(passes_1h_perspective, axis=1)
-            ].copy()
-            allowed_symbols = set(filtered["Symbol"].astype(str))
-            filtered_details = [
-                d for d in all_details if str(d[0]) in allowed_symbols
-            ]
-            selected = selected_1h_thresholds()
-            threshold_text = (
-                ", ".join(f"{x:.2f}%" for x in selected)
-                if selected else "none"
-            )
-            st.info(
-                f"1H Perspective is ON: showing {len(filtered)} of "
-                f"{len(all_results)} scanned BUY candidates. Selected "
-                f"threshold(s): {threshold_text}. Change the checkboxes "
-                "without running the scanner again."
-            )
-            render_scan_results(filtered, filtered_details)
-        else:
-            render_scan_results(all_results, all_details)
+        filtered = all_results.copy()
+        active_filters = []
+        if perspective_45m_on:
+            filtered = filtered[filtered.apply(lambda row: timeframe_perspective_passes(row, "45M"), axis=1)].copy()
+            active_filters.append("45M")
+        if perspective_30m_on:
+            filtered = filtered[filtered.apply(lambda row: timeframe_perspective_passes(row, "30M"), axis=1)].copy()
+            active_filters.append("30M")
+        if active_filters:
+            st.info(f"Timeframe Perspective ON: {', '.join(active_filters)}. Showing {len(filtered)} of {len(all_results)} candidates. Change the switches without running the scanner again.")
+        render_scan_results(filtered, [d for d in all_details if str(d[0]) in set(filtered["Symbol"].astype(str))])
 
 
 if st.session_state.get("boom_scan_completed", False):
