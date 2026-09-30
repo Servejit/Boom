@@ -667,7 +667,8 @@ def render_scan_results(result_df, details):
     ordered = [c for c in desired_order if c in display_df.columns]
     remaining = [c for c in display_df.columns if c not in ordered]
     display_df = display_df[ordered + remaining]
-\n    result_color_map = {
+
+    result_color_map = {
         str(row["Symbol"]): str(
             row.get("_Green Color", "#00B050") or "#00B050"
         )
