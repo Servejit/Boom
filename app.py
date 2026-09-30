@@ -537,6 +537,36 @@ def passes_1h_perspective(row):
         for threshold in thresholds
     )
 
+def render_sidebar_matching_thumbnails(result_df):
+    with st.sidebar:
+        st.markdown("---")
+        st.subheader("🟢 Matching Stocks")
+        if result_df is None or result_df.empty:
+            st.caption("No matching stocks from the latest scan.")
+            return
+        for _, row in result_df.iterrows():
+            symbol = str(row.get("Symbol", ""))
+            color = str(row.get("_Green Color", "#00B050") or "#00B050")
+            signal_price = pd.to_numeric(row.get("Signal Price", np.nan), errors="coerce")
+            adx = pd.to_numeric(row.get("ADX", np.nan), errors="coerce")
+            body = pd.to_numeric(row.get("Green Body %", np.nan), errors="coerce")
+            with st.expander(f"🟢 {symbol}", expanded=False):
+                price_text = f"₹{signal_price:.2f}" if pd.notna(signal_price) else "N/A"
+                adx_text = f"{adx:.2f}" if pd.notna(adx) else "N/A"
+                body_text = f"{body:.2f}%" if pd.notna(body) else "N/A"
+                st.markdown(f"<div style='border-left:6px solid {color};padding:8px;border-radius:6px;background:rgba(0,176,80,.08)'><b>{symbol}</b><br>Signal: {price_text}</div>", unsafe_allow_html=True)
+                for label, value in [
+                    ("Alligator", "✓ Bullish"), ("Kijun", "✓ Cross + Close above"),
+                    ("Green Candle", f"✓ {body_text}"), ("ADX", f"✓ {adx_text}"),
+                    ("+DI > -DI", "✓"), ("3-Day O2L", "✓ All < -1%"),
+                    ("Price > Prev Close", "✓"),
+                    ("1H Current", f"✓ {row.get('1H Current','N/A')}"),
+                    ("1H Red-1", f"✓ {row.get('1H Red-1','N/A')}"),
+                    ("1H Red-2", f"✓ {row.get('1H Red-2','N/A')}"),
+                    ("1H Red-3", f"✓ {row.get('1H Red-3','N/A')}"),
+                ]:
+                    st.markdown(f"**{label}:** {value}")
+
 def render_scan_results(result_df, details):
     if result_df.empty:
         st.warning("No saved green stocks matched the active filters.")
@@ -714,6 +744,14 @@ if st.session_state.get("boom_scan_completed", False):
             render_scan_results(filtered, filtered_details)
         else:
             render_scan_results(all_results, all_details)
+
+
+if st.session_state.get("boom_scan_completed", False):
+    _sidebar_results = st.session_state.get("boom_scan_results", pd.DataFrame()).copy()
+    if not _sidebar_results.empty:
+        if perspective_1h_on:
+            _sidebar_results = _sidebar_results[_sidebar_results.apply(passes_1h_perspective, axis=1)].copy()
+        render_sidebar_matching_thumbnails(_sidebar_results)
 
 with st.expander("📐 Formulas / Definitions"):
     st.code("""O2L% = ((Low - Open) / Open) * 100
