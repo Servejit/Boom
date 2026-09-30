@@ -426,11 +426,12 @@ def kijun_crosses_through_candle(row):
     tol = abs(float(k)) * kijun_tolerance / 100.0
     return float(row["Low"]) - tol <= float(k) <= float(row["High"]) + tol
 
-def find_signal(intraday):
+def find_signal(intraday, max_pos=None):
     if intraday.empty:
         return None
     df = calculate_adx(calculate_ichimoku(calculate_alligator(intraday)))
-    for pos in range(len(df) - 1, -1, -1):
+    start_pos = len(df) - 1 if max_pos is None else min(int(max_pos), len(df) - 1)
+    for pos in range(start_pos, -1, -1):
         row = df.iloc[pos]
         ts = df.index[pos]
         if any(pd.isna(row[c]) for c in ["Kijun", "Jaw", "Teeth", "Lips", "ADX", "+DI", "-DI"]):
@@ -490,7 +491,8 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
         current_price = float(intraday["Close"].dropna().iloc[-1])
         if current_price <= previous_close:
             return None
-        signal = find_signal(intraday)
+        backtest_max_pos = len(intraday) - int(bt_bars) - 1 if show_backtest else None
+        signal = find_signal(intraday, backtest_max_pos)
         if not signal:
             return None
         hourly = get_1h_data(symbol)
