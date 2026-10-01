@@ -14,6 +14,8 @@ st.set_page_config(page_title="3-Minute Bullish BUY Scanner", page_icon="📈", 
 
 UNIVERSE_FILE = Path(".boom_stock_universe.csv")
 UNIVERSE_META = Path(".boom_stock_universe_meta.json")
+INDEX_FILE = Path(".boom_index_universe.csv")
+INDEX_META = Path(".boom_index_universe_meta.json")
 
 def normalize_symbol(value):
     if pd.isna(value):
@@ -156,6 +158,107 @@ def load_saved_universe():
     except Exception:
         return []
 
+def parse_index_file(uploaded_bytes):
+    """Parse an Excel index file: row 1 contains index names, stocks are below each column."""
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(uploaded_bytes), data_only=True)
+    ws = wb.active
+    index_map = {}
+    for c in range(1, ws.max_column + 1):
+        raw_index = ws.cell(1, c).value
+        if raw_index is None or not str(raw_index).strip():
+            continue
+        index_name = str(raw_index).strip()
+        symbols = []
+        for r in range(2, ws.max_row + 1):
+            symbol = normalize_symbol(ws.cell(r, c).value)
+            if symbol:
+                symbols.append(symbol)
+        if symbols:
+            index_map[index_name] = list(dict.fromkeys(symbols))
+    return index_map
+
+def save_index_universe(index_map, original_filename):
+    rows = []
+    for index_name, symbols in index_map.items():
+        for symbol in symbols:
+            rows.append({"Index": index_name, "Symbol": symbol})
+    pd.DataFrame(rows, columns=["Index", "Symbol"]).to_csv(INDEX_FILE, index=False)
+    meta = {
+        "filename": original_filename,
+        "index_count": len(index_map),
+        "stock_membership_count": len(rows),
+        "updated": pd.Timestamp.now().isoformat(),
+        "hash": hashlib.sha256(json.dumps(index_map, sort_keys=True).encode()).hexdigest()
+    }
+    INDEX_META.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+def load_saved_index_universe():
+    if not INDEX_FILE.exists():
+        return {}
+    try:
+        df = pd.read_csv(INDEX_FILE)
+        if not {"Index", "Symbol"}.issubset(df.columns):
+            return {}
+        out = {}
+        for index_name, group in df.groupby("Index", sort=False):
+            symbols = [normalize_symbol(x) for x in group["Symbol"].dropna().tolist()]
+            symbols = [x for x in symbols if x]
+            if symbols:
+                out[str(index_name)] = list(dict.fromkeys(symbols))
+        return out
+    except Exception:
+        return {}
+
+def load_index_meta():
+    if not INDEX_META.exists():
+        return {}
+    try:
+        return json.loads(INDEX_META.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+def get_index_positions(index_map):
+    """Return each symbol's rank by current-day % change within every supplied index."""
+    if not index_map:
+        return {}
+    all_symbols = list(dict.fromkeys(s for members in index_map.values() for s in members))
+    if not all_symbols:
+        return {}
+    try:
+        raw = yf.download(
+            all_symbols, period="5d", interval="1d", auto_adjust=False,
+            progress=False, threads=False, group_by="column"
+        )
+        if raw.empty:
+            return {}
+        if isinstance(raw.columns, pd.MultiIndex):
+            close = raw["Close"] if "Close" in raw.columns.get_level_values(0) else pd.DataFrame()
+        else:
+            close = raw[["Close"]] if "Close" in raw.columns else pd.DataFrame()
+            if len(all_symbols) == 1:
+                close.columns = all_symbols
+        if close.empty:
+            return {}
+        changes = {}
+        for symbol in all_symbols:
+            try:
+                series = pd.to_numeric(close[symbol], errors="coerce").dropna()
+                if len(series) < 2 or float(series.iloc[-2]) == 0:
+                    continue
+                changes[symbol] = (float(series.iloc[-1]) / float(series.iloc[-2]) - 1.0) * 100.0
+            except Exception:
+                continue
+        positions = {}
+        for index_name, members in index_map.items():
+            ranked = [(symbol, changes[symbol]) for symbol in members if symbol in changes]
+            ranked.sort(key=lambda x: x[1], reverse=True)
+            for rank, (symbol, pct) in enumerate(ranked, 1):
+                positions.setdefault(symbol, []).append(f"{index_name}: Top {rank} ({pct:+.2f}%)")
+        return {symbol: "; ".join(values) if values else "No Index" for symbol, values in positions.items()}
+    except Exception:
+        return {}
+
 def load_meta():
     if not UNIVERSE_META.exists():
         return {}
@@ -191,6 +294,31 @@ with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_uni
             st.error(f"Could not process the file: {e}")
 
 saved_universe = load_saved_universe()
+st.subheader("📊 Index Membership File")
+with st.expander("Upload / Replace Index File", expanded=not bool(load_saved_index_universe())):
+    index_uploaded = st.file_uploader(
+        "Upload an Excel file: first row = Index names, stocks below each index column.",
+        type=["xlsx", "xls"], key="index_file_upload"
+    )
+    if index_uploaded is not None:
+        try:
+            index_map = parse_index_file(index_uploaded.getvalue())
+            if index_map:
+                save_index_universe(index_map, index_uploaded.name)
+                st.success(f"Saved {len(index_map)} indexes from {index_uploaded.name}. This file will remain active until the next Index File upload.")
+            else:
+                st.error("No index memberships were detected. Make sure the first row contains index names and stocks are listed below each column.")
+        except Exception as e:
+            st.error(f"Could not process the Index File: {e}")
+
+saved_index_map = load_saved_index_universe()
+index_meta = load_index_meta()
+if saved_index_map:
+    total_memberships = sum(len(v) for v in saved_index_map.values())
+    st.success(f"ACTIVE INDEX FILE: {len(saved_index_map)} indexes | {total_memberships} memberships | File: {index_meta.get('filename','saved file')} | Next Index File upload will replace it.")
+else:
+    st.caption("No Index File is active. Scanned stocks will show 'No Index'.")
+
 saved_symbols = [r["Symbol"] for r in saved_universe]
 meta = load_meta()
 
@@ -503,7 +631,7 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
             outcome = "Neither" if len(intraday) > int(signal["_signal_pos"]) + 1 else "No future data"
             outcome_pct = 0.0 if outcome == "Neither" else np.nan
         return {
-            "Symbol": symbol.replace(".NS", ""), "_Green Color": green_color,
+            "Symbol": symbol.replace(".NS", ""), "_Green Color": green_color, "Index Position": "No Index",
             "Current Price": current_price, "Previous Close": previous_close,
             "Day-1 O2L%": float(previous_three["O2L%"].iloc[-1]), "Day-2 O2L%": float(previous_three["O2L%"].iloc[-2]), "Day-3 O2L%": float(previous_three["O2L%"].iloc[-3]),
             "Signal Time": signal["Signal Time"], "Signal Price": signal["Signal Price"], "Kijun": signal["Kijun"],
@@ -638,7 +766,7 @@ def render_scan_results(result_df, details):
             ).map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
 
     desired_order = [
-        "Symbol", "Current Price", "Previous Close", "Day-1 O2L%", "Day-2 O2L%", "Day-3 O2L%",
+        "Symbol", "Current Price", "Previous Close", "Index Position", "Day-1 O2L%", "Day-2 O2L%", "Day-3 O2L%",
         "Signal Time", "Signal Price", "Kijun", "ADX", "+DI", "-DI", "Backtest Outcome", "Backtest Return %",
         "Green Body %", "Alligator", "1H Current", "1H Red Pattern", "45M Current", "45M Red Pattern", "30M Current", "30M Red Pattern", "15M Current", "15M Red Pattern"
     ]
@@ -754,6 +882,9 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
                     pass
                 progress.progress(i / total)
 
+        index_positions = get_index_positions(saved_index_map)
+        for row in results:
+            row["Index Position"] = index_positions.get(str(row.get("Symbol", "")).upper() + ".NS", "No Index")
         st.session_state["boom_scan_results"] = pd.DataFrame(results)
         st.session_state["boom_scan_details"] = details
         st.session_state["boom_scan_completed"] = True
