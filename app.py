@@ -65,39 +65,76 @@ def is_blue_fill(cell):
         pass
     return False
 
+def get_blue_fill_hex(cell):
+    """Return the source Excel blue fill as a hex colour when possible."""
+    try:
+        fill = cell.fill
+        if not fill or not fill.fill_type:
+            return "#0000FF"
+        fg = fill.fgColor
+        if fg.type == "rgb" and fg.rgb:
+            h = fg.rgb[-6:].upper()
+            r, g, b = int(h[:2], 16), int(h[2:4], 16), int(h[4:], 16)
+            if b > r * 1.15 and b > g * 1.10:
+                return "#" + h
+        if fg.type == "indexed" and fg.indexed is not None:
+            indexed_hex = {
+                5: "#0000FF", 12: "#000080", 23: "#3366FF", 24: "#6699FF",
+                27: "#0033CC", 28: "#336699", 30: "#0066CC", 32: "#0099FF",
+                41: "#0000FF", 42: "#0066CC", 49: "#0000FF", 55: "#3366FF"
+            }
+            if fg.indexed in indexed_hex:
+                return indexed_hex[fg.indexed]
+        rgb = getattr(fg, "rgb", None)
+        if rgb:
+            h = rgb[-6:].upper()
+            r, g, b = int(h[:2], 16), int(h[2:4], 16), int(h[4:], 16)
+            if b > r * 1.15 and b > g * 1.10:
+                return "#" + h
+    except Exception:
+        pass
+    return "#0000FF"
+
 def extract_auto_blue_stocks(wb):
-    """Read blue stocks from AutoBlue column A only."""
+    """Read blue stocks from AutoBlue column A only and retain source blue colour."""
     try:
         if "AutoBlue" not in wb.sheetnames:
-            return []
+            return {}
         ws = wb["AutoBlue"]
-        blue_symbols = []
+        blue_symbols = {}
         for r in range(1, ws.max_row + 1):
             cell = ws.cell(r, 1)
             symbol = normalize_symbol(cell.value)
             if symbol and is_blue_fill(cell):
-                blue_symbols.append(symbol)
-        return list(dict.fromkeys(blue_symbols))
+                blue_symbols[symbol] = get_blue_fill_hex(cell)
+        return blue_symbols
     except Exception:
-        return []
+        return {}
 
-def save_auto_blue_stocks(symbols, original_filename):
+def save_auto_blue_stocks(blue_map, original_filename):
     payload = {
         "filename": original_filename,
-        "symbols": list(dict.fromkeys(symbols)),
+        "symbols": blue_map,
         "updated": pd.Timestamp.now().isoformat(),
-        "hash": hashlib.sha256("|".join(sorted(set(symbols))).encode()).hexdigest()
+        "hash": hashlib.sha256(json.dumps(blue_map, sort_keys=True).encode()).hexdigest()
     }
     AUTO_BLUE_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 def load_auto_blue_stocks():
     if not AUTO_BLUE_FILE.exists():
-        return set()
+        return {}
     try:
         payload = json.loads(AUTO_BLUE_FILE.read_text(encoding="utf-8"))
-        return set(normalize_symbol(x) for x in payload.get("symbols", []) if normalize_symbol(x))
+        raw = payload.get("symbols", {})
+        if isinstance(raw, list):
+            return {normalize_symbol(x): "#0000FF" for x in raw if normalize_symbol(x)}
+        return {
+            normalize_symbol(symbol): str(color or "#0000FF")
+            for symbol, color in raw.items()
+            if normalize_symbol(symbol)
+        }
     except Exception:
-        return set()
+        return {}
 
 def is_green_value(v):
     s = str(v).strip().lower()
@@ -337,7 +374,7 @@ with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_uni
             if uploaded.name.lower().endswith((".xlsx", ".xls")):
                 from openpyxl import load_workbook
                 wb_upload = load_workbook(io.BytesIO(raw_bytes), data_only=True)
-                auto_blue_symbols = extract_auto_blue_stocks(wb_upload)
+                auto_blue_map = extract_auto_blue_stocks(wb_upload)
                 records = extract_green_stocks_from_excel(raw_bytes, uploaded.name)
                 if not records:
                     import io
@@ -349,11 +386,11 @@ with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_uni
                 records = [{"Symbol": s, "Green Shade": "Green", "Green Color": "#00B050"} for s in extract_green_stocks(df_upload)]
             if records:
                 save_universe(records, uploaded.name)
-                save_auto_blue_stocks(auto_blue_symbols, uploaded.name)
+                save_auto_blue_stocks(auto_blue_map, uploaded.name)
                 st.success(
                     f"Saved {len(records)} AutoGreen stocks from {uploaded.name}. "
-                    f"{len(auto_blue_symbols)} blue AutoBlue stocks detected. "
-                    "Matching stocks will show a blue Current Price."
+                    f"{len(auto_blue_map)} blue AutoBlue stocks detected. "
+                    "Matching stocks will show the AutoBlue source colour in Current Price."
                 )
             else:
                 st.error("No green-shade stocks were detected. For Excel, make sure the stock rows/cells are actually filled with green.")
@@ -361,7 +398,7 @@ with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_uni
             st.error(f"Could not process the file: {e}")
 
 saved_universe = load_saved_universe()
-auto_blue_symbols = load_auto_blue_stocks()
+auto_blue_map = load_auto_blue_stocks()
 st.subheader("📊 Index Membership File")
 with st.expander("Upload / Replace Index File", expanded=not bool(load_saved_index_universe())):
     index_uploaded = st.file_uploader(
@@ -700,7 +737,8 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050", auto_blue=Fal
             outcome_pct = 0.0 if outcome == "Neither" else np.nan
         return {
             "Symbol": symbol.replace(".NS", ""), "_Green Color": green_color,
-            "_AutoBlue": bool(auto_blue), "Index Position": "No Index",
+            "_AutoBlue": bool(auto_blue), "_AutoBlueColor": auto_blue_map.get(symbol, "#0000FF") if auto_blue else "",
+            "Index Position": "No Index",
             "Current Price": current_price, "Previous Close": previous_close,
             "Day-1 O2L%": float(previous_three["O2L%"].iloc[-1]), "Day-2 O2L%": float(previous_three["O2L%"].iloc[-2]), "Day-3 O2L%": float(previous_three["O2L%"].iloc[-3]),
             "Signal Time": signal["Signal Time"], "Signal Price": signal["Signal Price"], "Kijun": signal["Kijun"],
@@ -822,7 +860,7 @@ def render_scan_results(result_df, details):
     )
     st.subheader(f"BUY Candidates ({len(result_df)})")
     display_df = result_df.drop(
-        columns=["_Green Color", "_AutoBlue", "_Chart Thumbnail", "1H Perspective Ready", "1H Red-1", "1H Red-2", "1H Red-3", "1H Red-1 Above Low %", "1H Red-2 Above Low %", "1H Red-3 Above Low %"], errors="ignore"
+        columns=["_Green Color", "_AutoBlue", "_AutoBlueColor", "_Chart Thumbnail", "1H Perspective Ready", "1H Red-1", "1H Red-2", "1H Red-3", "1H Red-1 Above Low %", "1H Red-2 Above Low %", "1H Red-3 Above Low %"], errors="ignore"
     ).copy()
 
     for col in [
@@ -863,7 +901,8 @@ def render_scan_results(result_df, details):
             if col == "Symbol":
                 styles.append(f"background-color: {green_color}; font-weight: 700")
             elif col == "Current Price" and blue_price:
-                styles.append("color: #0000FF; font-weight: 700")
+                blue_color = str(row.get("_AutoBlueColor", "#0000FF") or "#0000FF")
+                styles.append(f"color: {blue_color}; font-weight: 700")
             else:
                 styles.append("")
         return styles
@@ -938,7 +977,7 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
                     r["Symbol"],
                     r.get("Green Shade", "Green"),
                     r.get("Green Color", "#00B050"),
-                    r["Symbol"] in auto_blue_symbols
+                    r["Symbol"] in auto_blue_map
                 ): r
                 for r in saved_universe
             }
