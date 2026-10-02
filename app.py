@@ -887,21 +887,25 @@ def render_scan_results(result_df, details):
         )
         for _, row in result_df.iterrows()
     }
-    auto_blue_map = {
+    auto_blue_status_map = {
         str(row["Symbol"]): bool(row.get("_AutoBlue", False))
+        for _, row in result_df.iterrows()
+    }
+    auto_blue_color_map = {
+        str(row["Symbol"]): str(row.get("_AutoBlueColor", "#0000FF") or "#0000FF")
         for _, row in result_df.iterrows()
     }
 
     def color_result_rows(row):
         symbol = str(row["Symbol"])
         green_color = result_color_map.get(symbol, "#00B050")
-        blue_price = auto_blue_map.get(symbol, False)
+        blue_price = auto_blue_status_map.get(symbol, False)
         styles = []
         for col in display_df.columns:
             if col == "Symbol":
                 styles.append(f"background-color: {green_color}; font-weight: 700")
             elif col == "Current Price" and blue_price:
-                blue_color = str(row.get("_AutoBlueColor", "#0000FF") or "#0000FF")
+                blue_color = auto_blue_color_map.get(symbol, "#0000FF")
                 styles.append(f"color: {blue_color}; font-weight: 700")
             else:
                 styles.append("")
