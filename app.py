@@ -397,7 +397,8 @@ with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_uni
         except Exception as e:
             st.error(f"Could not process the file: {e}")
 
-saved_universe = load_saved_universe()auto_blue_map = load_auto_blue_stocks()
+saved_universe = load_saved_universe()
+auto_blue_map = load_auto_blue_stocks()
 st.subheader("📊 Index Membership File")
 with st.expander("Upload / Replace Index File", expanded=not bool(load_saved_index_universe())):
     index_uploaded = st.file_uploader(
