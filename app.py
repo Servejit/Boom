@@ -370,7 +370,7 @@ with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_uni
     if uploaded is not None:
         try:
             raw_bytes = uploaded.getvalue()
-            auto_blue_symbols = []
+            auto_blue_map = {}
             if uploaded.name.lower().endswith((".xlsx", ".xls")):
                 from openpyxl import load_workbook
                 wb_upload = load_workbook(io.BytesIO(raw_bytes), data_only=True)
