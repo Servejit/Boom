@@ -14,6 +14,7 @@ st.set_page_config(page_title="3-Minute Bullish BUY Scanner", page_icon="📈", 
 
 UNIVERSE_FILE = Path(".boom_stock_universe.csv")
 UNIVERSE_META = Path(".boom_stock_universe_meta.json")
+AUTO_BLUE_FILE = Path(".boom_auto_blue.json")
 INDEX_FILE = Path(".boom_index_universe.csv")
 INDEX_META = Path(".boom_index_universe_meta.json")
 
@@ -41,6 +42,62 @@ def detect_symbol_column(df):
         if sc > score:
             best, score = c, sc
     return best
+
+def is_blue_fill(cell):
+    """Return True when an Excel cell has a blue background/fill."""
+    try:
+        fill = cell.fill
+        if not fill or not fill.fill_type:
+            return False
+        fg = fill.fgColor
+        if fg.type == "rgb" and fg.rgb:
+            h = fg.rgb[-6:].upper()
+            r, g, b = int(h[:2], 16), int(h[2:4], 16), int(h[4:], 16)
+            return b > r * 1.15 and b > g * 1.10
+        if fg.type == "indexed" and fg.indexed is not None:
+            return fg.indexed in {5, 12, 23, 24, 27, 28, 30, 32, 41, 42, 49, 55}
+        rgb = getattr(fg, "rgb", None)
+        if rgb:
+            h = rgb[-6:].upper()
+            r, g, b = int(h[:2], 16), int(h[2:4], 16), int(h[4:], 16)
+            return b > r * 1.15 and b > g * 1.10
+    except Exception:
+        pass
+    return False
+
+def extract_auto_blue_stocks(wb):
+    """Read blue stocks from AutoBlue column A only."""
+    try:
+        if "AutoBlue" not in wb.sheetnames:
+            return []
+        ws = wb["AutoBlue"]
+        blue_symbols = []
+        for r in range(1, ws.max_row + 1):
+            cell = ws.cell(r, 1)
+            symbol = normalize_symbol(cell.value)
+            if symbol and is_blue_fill(cell):
+                blue_symbols.append(symbol)
+        return list(dict.fromkeys(blue_symbols))
+    except Exception:
+        return []
+
+def save_auto_blue_stocks(symbols, original_filename):
+    payload = {
+        "filename": original_filename,
+        "symbols": list(dict.fromkeys(symbols)),
+        "updated": pd.Timestamp.now().isoformat(),
+        "hash": hashlib.sha256("|".join(sorted(set(symbols))).encode()).hexdigest()
+    }
+    AUTO_BLUE_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+def load_auto_blue_stocks():
+    if not AUTO_BLUE_FILE.exists():
+        return set()
+    try:
+        payload = json.loads(AUTO_BLUE_FILE.read_text(encoding="utf-8"))
+        return set(normalize_symbol(x) for x in payload.get("symbols", []) if normalize_symbol(x))
+    except Exception:
+        return set()
 
 def is_green_value(v):
     s = str(v).strip().lower()
@@ -119,7 +176,8 @@ def extract_green_stocks_from_excel(uploaded_bytes, filename):
         from openpyxl import load_workbook
         import io
         wb = load_workbook(io.BytesIO(uploaded_bytes), data_only=True)
-        ws = wb.active
+        # AutoGreen is the ONLY source of the scanning universe.
+        ws = wb["AutoGreen"] if "AutoGreen" in wb.sheetnames else wb.active
         headers = [cell.value for cell in ws[1]]
         symbol_col = detect_symbol_column(pd.DataFrame(columns=headers))
         symbol_idx = headers.index(symbol_col) + 1 if symbol_col is not None else 1
@@ -275,7 +333,11 @@ with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_uni
     if uploaded is not None:
         try:
             raw_bytes = uploaded.getvalue()
+            auto_blue_symbols = []
             if uploaded.name.lower().endswith((".xlsx", ".xls")):
+                from openpyxl import load_workbook
+                wb_upload = load_workbook(io.BytesIO(raw_bytes), data_only=True)
+                auto_blue_symbols = extract_auto_blue_stocks(wb_upload)
                 records = extract_green_stocks_from_excel(raw_bytes, uploaded.name)
                 if not records:
                     import io
@@ -287,13 +349,19 @@ with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_uni
                 records = [{"Symbol": s, "Green Shade": "Green", "Green Color": "#00B050"} for s in extract_green_stocks(df_upload)]
             if records:
                 save_universe(records, uploaded.name)
-                st.success(f"Saved {len(records)} green-shade stocks from {uploaded.name}. This list will remain active until the next upload.")
+                save_auto_blue_stocks(auto_blue_symbols, uploaded.name)
+                st.success(
+                    f"Saved {len(records)} AutoGreen stocks from {uploaded.name}. "
+                    f"{len(auto_blue_symbols)} blue AutoBlue stocks detected. "
+                    "Matching stocks will show a blue Current Price."
+                )
             else:
                 st.error("No green-shade stocks were detected. For Excel, make sure the stock rows/cells are actually filled with green.")
         except Exception as e:
             st.error(f"Could not process the file: {e}")
 
 saved_universe = load_saved_universe()
+auto_blue_symbols = load_auto_blue_stocks()
 st.subheader("📊 Index Membership File")
 with st.expander("Upload / Replace Index File", expanded=not bool(load_saved_index_universe())):
     index_uploaded = st.file_uploader(
@@ -605,7 +673,7 @@ def evaluate_signal_outcome(intraday, signal):
     except Exception:
         return "Unknown", np.nan
 
-def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
+def scan_stock(symbol, green_shade="Green", green_color="#00B050", auto_blue=False):
     try:
         daily = calculate_o2l(get_daily_data(symbol))
         if daily.empty or len(daily) < 5:
@@ -631,7 +699,8 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050"):
             outcome = "Neither" if len(intraday) > int(signal["_signal_pos"]) + 1 else "No future data"
             outcome_pct = 0.0 if outcome == "Neither" else np.nan
         return {
-            "Symbol": symbol.replace(".NS", ""), "_Green Color": green_color, "Index Position": "No Index",
+            "Symbol": symbol.replace(".NS", ""), "_Green Color": green_color,
+            "_AutoBlue": bool(auto_blue), "Index Position": "No Index",
             "Current Price": current_price, "Previous Close": previous_close,
             "Day-1 O2L%": float(previous_three["O2L%"].iloc[-1]), "Day-2 O2L%": float(previous_three["O2L%"].iloc[-2]), "Day-3 O2L%": float(previous_three["O2L%"].iloc[-3]),
             "Signal Time": signal["Signal Time"], "Signal Price": signal["Signal Price"], "Kijun": signal["Kijun"],
@@ -753,7 +822,7 @@ def render_scan_results(result_df, details):
     )
     st.subheader(f"BUY Candidates ({len(result_df)})")
     display_df = result_df.drop(
-        columns=["_Green Color", "_Chart Thumbnail", "1H Perspective Ready", "1H Red-1", "1H Red-2", "1H Red-3", "1H Red-1 Above Low %", "1H Red-2 Above Low %", "1H Red-3 Above Low %"], errors="ignore"
+        columns=["_Green Color", "_AutoBlue", "_Chart Thumbnail", "1H Perspective Ready", "1H Red-1", "1H Red-2", "1H Red-3", "1H Red-1 Above Low %", "1H Red-2 Above Low %", "1H Red-3 Above Low %"], errors="ignore"
     ).copy()
 
     for col in [
@@ -780,15 +849,24 @@ def render_scan_results(result_df, details):
         )
         for _, row in result_df.iterrows()
     }
+    auto_blue_map = {
+        str(row["Symbol"]): bool(row.get("_AutoBlue", False))
+        for _, row in result_df.iterrows()
+    }
 
     def color_result_rows(row):
         symbol = str(row["Symbol"])
-        color = result_color_map.get(symbol, "#00B050")
-        return [
-            f"background-color: {color}; font-weight: 700"
-            if col == "Symbol" else ""
-            for col in display_df.columns
-        ]
+        green_color = result_color_map.get(symbol, "#00B050")
+        blue_price = auto_blue_map.get(symbol, False)
+        styles = []
+        for col in display_df.columns:
+            if col == "Symbol":
+                styles.append(f"background-color: {green_color}; font-weight: 700")
+            elif col == "Current Price" and blue_price:
+                styles.append("color: #0000FF; font-weight: 700")
+            else:
+                styles.append("")
+        return styles
 
     st.dataframe(
         display_df.style.apply(color_result_rows, axis=1),
@@ -859,7 +937,8 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
                     scan_stock,
                     r["Symbol"],
                     r.get("Green Shade", "Green"),
-                    r.get("Green Color", "#00B050")
+                    r.get("Green Color", "#00B050"),
+                    r["Symbol"] in auto_blue_symbols
                 ): r
                 for r in saved_universe
             }
