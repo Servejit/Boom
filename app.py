@@ -397,8 +397,7 @@ with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_uni
         except Exception as e:
             st.error(f"Could not process the file: {e}")
 
-saved_universe = load_saved_universe()
-auto_blue_map = load_auto_blue_stocks()
+saved_universe = load_saved_universe()auto_blue_map = load_auto_blue_stocks()
 st.subheader("📊 Index Membership File")
 with st.expander("Upload / Replace Index File", expanded=not bool(load_saved_index_universe())):
     index_uploaded = st.file_uploader(
@@ -797,8 +796,7 @@ def make_chart_thumbnail(intraday, signal):
         plt.close(fig)
         return buf.getvalue()
     except Exception:
-        try:
-            plt.close("all")
+        try:            plt.close("all")
         except Exception:
             pass
         return None
@@ -906,7 +904,7 @@ def render_scan_results(result_df, details):
                 styles.append(f"background-color: {green_color}; font-weight: 700")
             elif col == "Current Price" and blue_price:
                 blue_color = auto_blue_color_map.get(symbol, "#0000FF")
-                styles.append(f"color: {blue_color}; font-weight: 700")
+                styles.append(f"background-color: {blue_color}; font-weight: 700")
             else:
                 styles.append("")
         return styles
