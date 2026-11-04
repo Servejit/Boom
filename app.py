@@ -435,7 +435,7 @@ if saved_universe:
         symbol = str(row["Green Stocks"])
         color = color_map.get(symbol, "#00B050")
         return [f"background-color: {color}; font-weight: 700"]
-    st.table(universe_df.style.apply(color_universe_rows, axis=1))
+    st.markdown(universe_df.style.apply(color_universe_rows, axis=1).to_html(), unsafe_allow_html=True)
 else:
     st.warning("No stock file is saved yet. Upload your file to create the green-stock scanning universe.")
 
@@ -911,7 +911,7 @@ def render_scan_results(result_df, details):
                 styles.append("")
         return styles
 
-    st.table(display_df.style.apply(color_result_rows, axis=1))
+    st.markdown(display_df.style.apply(color_result_rows, axis=1).to_html(), unsafe_allow_html=True)
     st.download_button(
         "⬇️ Download CSV",
         display_df.to_csv(index=False).encode("utf-8"),
