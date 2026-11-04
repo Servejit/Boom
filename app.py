@@ -435,7 +435,7 @@ if saved_universe:
         symbol = str(row["Green Stocks"])
         color = color_map.get(symbol, "#00B050")
         return [f"background-color: {color}; font-weight: 700"]
-    st.dataframe(universe_df.style.apply(color_universe_rows, axis=1), use_container_width=True, hide_index=True)
+    st.table(universe_df.style.apply(color_universe_rows, axis=1))
 else:
     st.warning("No stock file is saved yet. Upload your file to create the green-stock scanning universe.")
 
@@ -910,11 +910,7 @@ def render_scan_results(result_df, details):
                 styles.append("")
         return styles
 
-    st.dataframe(
-        display_df.style.apply(color_result_rows, axis=1),
-        use_container_width=True,
-        hide_index=True
-    )
+    st.table(display_df.style.apply(color_result_rows, axis=1))
     st.download_button(
         "⬇️ Download CSV",
         display_df.to_csv(index=False).encode("utf-8"),
@@ -997,7 +993,7 @@ if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
                         row["_Chart Thumbnail"] = make_chart_thumbnail(get_intraday_data(record["Symbol"]), signal)
                         results.append(row)
                         details.append(
-                            (row["Symbol"], signal, outcome, outcome_pct)
+                            (row["Symbol"], signal, row.get("Backtest Outcome", "Not Run"), row.get("Backtest Return %", np.nan))
                         )
                 except Exception:
                     pass
