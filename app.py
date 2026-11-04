@@ -10,7 +10,50 @@ import re
 import io
 # Matplotlib is imported inside make_chart_thumbnail to reduce app startup time.
 
-st.set_page_config(page_title="3-Minute Bullish BUY Scanner", page_icon="📈", layout="wide")
+st.set_page_config(page_title="BOOM | Bullish BUY Scanner", page_icon="📈", layout="wide")
+
+# Professional trading-terminal styling. Presentation only; scanner calculations are unchanged.
+st.markdown("""
+<style>
+    :root { --boom-navy: #10243a; --boom-green: #00a86b; --boom-muted: #718096; }
+    .block-container { max-width: 1500px; padding-top: 1.25rem; padding-bottom: 3rem; }
+    h1, h2, h3 { letter-spacing: -0.025em; }
+    h1 { font-size: clamp(1.65rem, 3vw, 2.35rem) !important; font-weight: 800 !important; }
+    [data-testid="stMetric"] {
+        background: linear-gradient(145deg, rgba(16,36,58,.06), rgba(0,168,107,.045));
+        border: 1px solid rgba(120,140,160,.22); border-radius: 14px;
+        padding: 13px 15px; min-height: 96px;
+    }
+    [data-testid="stMetricLabel"] { font-weight: 650; }
+    [data-testid="stExpander"] {
+        border: 1px solid rgba(120,140,160,.28); border-radius: 12px;
+        overflow: hidden; margin-bottom: .65rem;
+    }
+    [data-testid="stFileUploader"] {
+        border: 1px dashed rgba(0,168,107,.55); border-radius: 12px;
+        padding: 10px; background: rgba(0,168,107,.035);
+    }
+    .stButton > button, .stDownloadButton > button, [data-testid="stLinkButton"] > a {
+        border-radius: 10px; font-weight: 700; min-height: 2.7rem;
+    }
+    .stButton > button[kind="primary"] {
+        border: 0; background: linear-gradient(90deg, #087f5b, #00a86b);
+        box-shadow: 0 5px 16px rgba(0,168,107,.18);
+    }
+    [data-testid="stSidebar"] { border-right: 1px solid rgba(120,140,160,.2); }
+    [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { font-size: 1.05rem; }
+    .boom-kicker { color: var(--boom-green); font-size: .76rem; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; margin-bottom: .25rem; }
+    .boom-subtitle { color: var(--boom-muted); font-size: .94rem; margin-top: -.65rem; margin-bottom: 1.2rem; }
+    .boom-section { font-size: .78rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--boom-muted); margin: .4rem 0 .55rem; }
+    table { border-collapse: separate !important; border-spacing: 0; width: 100%; font-size: .88rem; }
+    table thead th { background: rgba(100,120,140,.12) !important; color: inherit !important; font-weight: 800 !important; }
+    table th, table td { padding: 9px 11px !important; border-bottom: 1px solid rgba(120,140,160,.18) !important; }
+    @media (max-width: 700px) {
+        .block-container { padding-left: .8rem; padding-right: .8rem; }
+        [data-testid="stMetric"] { padding: 10px; min-height: 85px; }
+    }
+</style>
+""", unsafe_allow_html=True)
 
 UNIVERSE_FILE = Path(".boom_stock_universe.csv")
 UNIVERSE_META = Path(".boom_stock_universe_meta.json")
@@ -362,8 +405,10 @@ def load_meta():
     except Exception:
         return {}
 
-st.title("📈 3-Minute Bullish BUY Scanner")
-st.subheader("🟢 Green-Stock Universe")
+st.markdown('<div class="boom-kicker">BOOM · MARKET SCANNER</div>', unsafe_allow_html=True)
+st.title("3-Minute Bullish BUY Scanner")
+st.markdown('<div class="boom-subtitle">A focused NSE screening workspace · Saved green-stock universe · Multi-timeframe confirmation</div>', unsafe_allow_html=True)
+st.markdown('<div class="boom-section">01 · Stock universe</div>', unsafe_allow_html=True)
 
 with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_universe())):
     uploaded = st.file_uploader("Upload your Excel/CSV stock file. Only green-shade stocks will be scanned.", type=["xlsx", "xls", "csv"], key="stock_universe_upload")
@@ -399,7 +444,7 @@ with st.expander("Upload / Replace Stock File", expanded=not bool(load_saved_uni
 
 saved_universe = load_saved_universe()
 auto_blue_map = load_auto_blue_stocks()
-st.subheader("📊 Index Membership File")
+st.markdown('<div class="boom-section">02 · Index membership</div>', unsafe_allow_html=True)
 with st.expander("Upload / Replace Index File", expanded=not bool(load_saved_index_universe())):
     index_uploaded = st.file_uploader(
         "Upload an Excel file: first row = Index names, stocks below each index column.",
@@ -420,35 +465,48 @@ saved_index_map = load_saved_index_universe()
 index_meta = load_index_meta()
 if saved_index_map:
     total_memberships = sum(len(v) for v in saved_index_map.values())
-    st.success(f"ACTIVE INDEX FILE: {len(saved_index_map)} indexes | {total_memberships} memberships | File: {index_meta.get('filename','saved file')} | Next Index File upload will replace it.")
 else:
-    st.caption("No Index File is active. Scanned stocks will show 'No Index'.")
+    total_memberships = 0
 
 saved_symbols = [r["Symbol"] for r in saved_universe]
 meta = load_meta()
 
+# Compact operational overview keeps the active files visible without dominating the page.
+status_a, status_b = st.columns(2)
+with status_a:
+    st.metric("ACTIVE GREEN STOCKS", len(saved_universe), help="Only these saved green-shade stocks are scanned.")
+    st.caption(f"File: {meta.get('filename', 'No stock file active')}")
+with status_b:
+    st.metric("INDEX MEMBERSHIPS", total_memberships, delta=f"{len(saved_index_map)} indexes" if saved_index_map else "No index file")
+    st.caption(f"File: {index_meta.get('filename', 'No index file active')}")
+
 if saved_universe:
-    st.success(f"ACTIVE UNIVERSE: {len(saved_universe)} green stocks | File: {meta.get('filename','saved file')} | Next upload will replace this list.")
     universe_df = pd.DataFrame({"Green Stocks": [r["Symbol"].replace(".NS", "") for r in saved_universe]})
     color_map = {r["Symbol"].replace(".NS", ""): r.get("Green Color", "#00B050") or "#00B050" for r in saved_universe}
     def color_universe_rows(row):
         symbol = str(row["Green Stocks"])
         color = color_map.get(symbol, "#00B050")
-        return [f"background-color: {color}; font-weight: 700"]
-    st.markdown(universe_df.style.apply(color_universe_rows, axis=1).to_html(), unsafe_allow_html=True)
+        return [f"background-color: {color}; color: #10243a; font-weight: 800"]
+    with st.expander(f"View saved green-stock list · {len(saved_universe)} stocks", expanded=False):
+        st.markdown(universe_df.style.apply(color_universe_rows, axis=1).to_html(), unsafe_allow_html=True)
 else:
-    st.warning("No stock file is saved yet. Upload your file to create the green-stock scanning universe.")
+    st.warning("No stock file is active. Upload a stock file to create the green-stock scanning universe.")
 
 with st.sidebar:
-    st.header("Scanner Controls")
+    st.markdown("## Control room")
+    st.caption("Configure the scan before running it.")
 
-    scan_on = st.checkbox("🟢 Scanner ON", value=True)
-    show_backtest = st.checkbox("📊 Backtest ON", value=True)
-    perspective_1h_on = st.checkbox("🕐 1H Perspective", value=False)
-    perspective_45m_on = st.checkbox("🕐 45M Perspective", value=False)
-    perspective_30m_on = st.checkbox("🕐 30M Perspective", value=False)
+    st.markdown('<div class="boom-section">Scanner status</div>', unsafe_allow_html=True)
+    scan_on = st.checkbox("Scanner enabled", value=True)
+    show_backtest = st.checkbox("Run forward backtest", value=True)
 
-    with st.expander("⚙️ Scanner Details", expanded=False):
+    st.markdown('<div class="boom-section">Timeframe filters</div>', unsafe_allow_html=True)
+    st.caption("Optional filters. These can be changed after a scan without downloading data again.")
+    perspective_1h_on = st.checkbox("1-hour perspective", value=False)
+    perspective_45m_on = st.checkbox("45-minute perspective", value=False)
+    perspective_30m_on = st.checkbox("30-minute perspective", value=False)
+
+    with st.expander("Advanced scanner settings", expanded=False):
         workers = st.slider("Parallel workers", 1, 10, 5)
 
         st.markdown("**Alligator settings**")
@@ -749,7 +807,7 @@ def scan_stock(symbol, green_shade="Green", green_color="#00B050", auto_blue=Fal
     except Exception:
         return None
 
-st.info("Only the saved green-shade stock universe is scanned. The saved file/list is retained until a new upload replaces it.")
+st.caption("SCAN SCOPE · Only the saved green-shade stock universe is scanned. Your active list and index file remain saved until you upload replacements.")
 
 def make_chart_thumbnail(intraday, signal):
     """Create a compact true 3-minute OHLC candlestick thumbnail with indicators."""
@@ -858,7 +916,8 @@ def render_scan_results(result_df, details):
     result_df = result_df.sort_values(
         ["Signal Time", "Green Body %"], ascending=[False, False]
     )
-    st.subheader(f"BUY Candidates ({len(result_df)})")
+    st.markdown('<div class="boom-section">03 · Scan results</div>', unsafe_allow_html=True)
+    st.subheader(f"BUY Candidates · {len(result_df)}")
     display_df = result_df.drop(
         columns=["_Green Color", "_AutoBlue", "_AutoBlueColor", "_Chart Thumbnail", "1H Perspective Ready", "1H Red-1", "1H Red-2", "1H Red-3", "1H Red-1 Above Low %", "1H Red-2 Above Low %", "1H Red-3 Above Low %"], errors="ignore"
     ).copy()
@@ -959,7 +1018,9 @@ def render_scan_results(result_df, details):
                 if not k.startswith("_")
             })
 
-if st.button("🚀 RUN BUY SCAN", type="primary", use_container_width=True):
+st.markdown('<div class="boom-section">03 · Execute scan</div>', unsafe_allow_html=True)
+st.caption(f"Ready to scan {len(saved_symbols)} saved green-shade stocks. Advanced conditions are unchanged.")
+if st.button(f"RUN BUY SCAN  ·  {len(saved_symbols)} STOCKS", type="primary", use_container_width=True):
     if not scan_on:
         st.info("Scanner is OFF. Turn Scanner ON from the sidebar to run it.")
         st.stop()
@@ -1042,7 +1103,7 @@ if st.session_state.get("boom_scan_completed", False):
             _sidebar_results = _sidebar_results[_sidebar_results.apply(lambda row: timeframe_perspective_passes(row, "1H"), axis=1)].copy()
         render_sidebar_matching_thumbnails(_sidebar_results)
 
-with st.expander("📐 Formulas / Definitions"):
+with st.expander("Reference · Formulas and signal definitions"):
     st.code("""O2L% = ((Low - Open) / Open) * 100
 Alligator bullish = Lips > Teeth > Jaw
 Kijun = (Highest High over 26 + Lowest Low over 26) / 2
