@@ -916,7 +916,7 @@ def render_scan_results(result_df, details):
     result_df = result_df.sort_values(
         ["Signal Time", "Green Body %"], ascending=[False, False]
     )
-    st.markdown('<div class="boom-section">03 · Scan results</div>', unsafe_allow_html=True)
+    st.markdown('<div class="boom-section">04 · Scan results</div>', unsafe_allow_html=True)
     st.subheader(f"BUY Candidates · {len(result_df)}")
     display_df = result_df.drop(
         columns=["_Green Color", "_AutoBlue", "_AutoBlueColor", "_Chart Thumbnail", "1H Perspective Ready", "1H Red-1", "1H Red-2", "1H Red-3", "1H Red-1 Above Low %", "1H Red-2 Above Low %", "1H Red-3 Above Low %"], errors="ignore"
