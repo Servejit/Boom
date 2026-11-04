@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import re
 import io
-import matplotlib.pyplot as plt
+# Matplotlib is imported inside make_chart_thumbnail to reduce app startup time.
 
 st.set_page_config(page_title="3-Minute Bullish BUY Scanner", page_icon="📈", layout="wide")
 
@@ -754,6 +754,7 @@ st.info("Only the saved green-shade stock universe is scanned. The saved file/li
 def make_chart_thumbnail(intraday, signal):
     """Create a compact true 3-minute OHLC candlestick thumbnail with indicators."""
     try:
+        import matplotlib.pyplot as plt
         df = calculate_adx(calculate_ichimoku(calculate_alligator(intraday.copy())))
         pos = int(signal.get("_signal_pos", len(df) - 1))
         chart = df.iloc[max(0, pos - 45):pos + 1].copy()
@@ -1052,4 +1053,4 @@ Current Price > Previous Daily Close
 ADX confirmation = ADX >= selected minimum, optionally rising, with +DI > -DI
 Backtest = target/stop outcome over selected number of subsequent 3-minute candles""")
 
-st.caption("Yahoo Finance/yfinance data. Screening signals are not guarantees of future price movement.")
+st.caption(f"Yahoo Finance/yfinance data | Streamlit {st.__version__}. Screening signals are not guarantees of future price movement.")
